@@ -25,17 +25,6 @@ probes/
     mime.probe.toml
     sha256.wasm
     sha256.probe.toml
-    name.wasm
-    name.probe.toml
-  text/
-    line_count.{wasm,probe.toml}
-    first_lines.{wasm,probe.toml}
-    frontmatter.{wasm,probe.toml}
-  pdf/
-    page_count.{wasm,probe.toml}
-    toc.{wasm,probe.toml}
-    title.{wasm,probe.toml}
-    text_excerpt.{wasm,probe.toml}
 ```
 
 A schema reference `probe = "pdf.page_count"` resolves to `probes/pdf/page_count.wasm` + `probes/pdf/page_count.probe.toml` in the current tree. Both files are stored as `blob` entries — the same rule as `schemas/*.schema` and `omp.toml`.
@@ -104,33 +93,21 @@ These flags are part of the fixed ABI (see 10-why-no-v2.md) — they are not con
 
 ## The starter probe pack
 
-OMP ships a starter pack as compiled WASM blobs bundled as package data. `omp init` writes them into the new repo's `probes/` directory alongside the starter schemas. The v1 starter pack:
+OMP ships a deliberately tiny starter pack as compiled WASM blobs bundled as package data. `omp init` writes them into the new repo's `probes/` directory alongside the starter schema. The v1 starter pack is three probes — all universal, all non-trivial.
 
 ### `file.*` — universal
 
 - **`file.size`** → `int` — byte length.
 - **`file.mime`** → `string` — detected MIME type via header sniff; falls back to `application/octet-stream`.
 - **`file.sha256`** → `string` — hex SHA-256 of raw bytes. Note this is the *blob's own hash*, distinct from the framed-object hash used in the tree.
-- **`file.name`** (kwargs: `path`) → `string` — basename derived from the ingest request's `path`.
 
-### `text.*`
+That's it. No `file.name` (the basename is already in the ingest request's `path`), no `text.*` probes (line counts / first-lines / frontmatter are genuinely useful but they belong with a committed `schemas/text.schema` + `probes/text/*` pair in whatever repo actually needs them, not baked into every fresh `omp init`), and no `pdf.*` stubs (a starter pack that returns null for half its probes is worse than no starter probe at all — it adds entries to `probe_hashes` that carry no information). Real `text.*` / `pdf.*` / `image.*` / `audio.*` probes are iteration-2 work; adding them is a committed blob in the target repo, not an OMP release.
 
-- **`text.line_count`** → `int` — LF-separated line count.
-- **`text.first_lines`** (kwargs: `n` = 10) → `list[string]` — first `n` lines.
-- **`text.frontmatter`** → `object?` — parsed YAML frontmatter if the file begins with `---\n...\n---\n`, else null.
+Starter-pack source lives in the OMP repo (Rust, targeting `wasm32-unknown-unknown`); the sibling `probes-src/` cargo workspace builds the probes, and each compiled `.wasm` blob is embedded into the host binary via `include_bytes!` at build time. Users see only the compiled blobs. Auditors can inspect the source at the OMP repo.
 
-### `pdf.*`
+One toolchain covers both sides — the host binary and the probes ship from one build flow. Adding a new starter probe is a new crate in `probes-src/`, not a cross-language build dance.
 
-- **`pdf.page_count`** → `int?` — page count, or null if the file isn't a parseable PDF.
-- **`pdf.toc`** → `list[object]?` — structured table of contents, or null.
-- **`pdf.title`** → `string?` — PDF metadata title, or null.
-- **`pdf.text_excerpt`** (kwargs: `pages` = `"1-2"`) → `string` — plain text from the given page range. Accepts ranges (`"1-3"`, `"1,3,5"`, `"1-"`).
-
-Starter-pack source lives in the OMP repo (Rust, targeting `wasm32-unknown-unknown`); the same `cargo` workspace that builds the OMP binary also builds the probes, and each compiled `.wasm` blob is embedded into the binary via `include_bytes!` at build time. Users see only the compiled blobs. Auditors can inspect the source at the OMP repo.
-
-One toolchain covers both sides — the host binary and the probes ship from one `cargo build --release` invocation. Adding a new starter probe is a new crate in the workspace, not a cross-language build dance.
-
-Iteration 2 ships additional starter probes (`image.*`, `audio.*`) as a new starter-pack release. No OMP API changes, no wire-format changes.
+Iteration 2 ships additional starter probes (real `pdf.*`, `image.*`, `audio.*`) as a new starter-pack release. No OMP API changes, no wire-format changes.
 
 ## Writing a new probe
 

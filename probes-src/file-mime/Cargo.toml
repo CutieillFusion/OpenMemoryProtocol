@@ -1,0 +1,14 @@
+[package]
+name = "file-mime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "file_mime"
+crate-type = ["cdylib"]
+
+[dependencies]
+probe-common = { path = "../probe-common" }
+ciborium = { workspace = true }
+infer = { version = "0.16", default-features = false }

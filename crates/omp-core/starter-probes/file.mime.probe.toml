@@ -1,0 +1,10 @@
+name = "file.mime"
+returns = "string"
+accepts_kwargs = []
+description = "Detected MIME type (header sniff); falls back to application/octet-stream."
+
+[limits]
+# MIME sniff only inspects the first few KiB, but the ABI hands the whole
+# blob to the probe. Cap the input at 32 MiB so a 200 GB file correctly
+# skips this probe rather than OOM-ing the sandbox.
+max_input_bytes = 33554432

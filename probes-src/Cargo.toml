@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "probe-common",
+    "file-size",
+    "file-mime",
+    "file-sha256",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+ciborium = { version = "0.2", default-features = false }
+ciborium-io = { version = "0.2", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

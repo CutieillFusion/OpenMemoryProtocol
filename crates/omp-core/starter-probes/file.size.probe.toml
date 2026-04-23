@@ -1,0 +1,4 @@
+name = "file.size"
+returns = "int"
+accepts_kwargs = []
+description = "Byte length of the file."

@@ -1,0 +1,14 @@
+[package]
+name = "file-sha256"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "file_sha256"
+crate-type = ["cdylib"]
+
+[dependencies]
+probe-common = { path = "../probe-common" }
+ciborium = { workspace = true }
+sha2 = { workspace = true }

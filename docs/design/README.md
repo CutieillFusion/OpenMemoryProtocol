@@ -18,6 +18,8 @@ Start with the overview, then read the technical docs in order — each builds o
 10. [**09-roadmap.md**](./09-roadmap.md) — v1 scope, iteration 2 additions, and explicitly-deferred items.
 11. [**10-why-no-v2.md**](./10-why-no-v2.md) — Which design decisions are fixed points, which are meant to be edited, and why we think v1 should survive.
 12. [**11-multi-tenancy.md**](./11-multi-tenancy.md) — Tenant model, auth boundary, per-tenant namespace over `ObjectStore`, quota strategy. Headline feature of iteration 2.
+13. [**12-large-files.md**](./12-large-files.md) — Per-file sizes up to 200 GB via a new `chunks` object type, streaming ingest, and probe gating. Additive; preserves all five fixed points.
+14. [**13-end-to-end-encryption.md**](./13-end-to-end-encryption.md) — Client-side encryption so the server never sees plaintext; keys derived from a user passphrase, shares via age-style X25519 recipient wraps. Defense-in-depth on top of `11-multi-tenancy.md`.
 
 ## How to give feedback
 
@@ -47,3 +49,5 @@ If a design decision spans multiple docs and you want to revisit it, flag it at 
 | 09-roadmap | v1 is a 2–3 week Rust core; iteration 2 adds multi-tenancy + image/audio + merge + alt backends; rest is deferred. |
 | 10-why-no-v2 | Five fixed points (SHA-256, framing, `ObjectStore`, four field sources + fallback wrapper, WASM probe ABI); everything else is designed for change. |
 | 11-multi-tenancy | Tenant = unit of isolation; `TenantStore` wraps `ObjectStore`; Bearer-token auth middleware; per-tenant quotas and locks. |
+| 12-large-files | Files up to 200 GB via a chunked Merkle `chunks` object + streaming ingest; probes gate on `max_input_bytes`; no wire-format break. |
+| 13-end-to-end-encryption | Client holds the keys; server stores ciphertext; sharing via X25519 wraps. Probes move to the client. Fixed points untouched. |

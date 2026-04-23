@@ -1,0 +1,725 @@
+//! Axum routes exposing `omp_core::api`. Every handler:
+//! 1. Calls `auth::resolve` to pin the request to one tenant's `Repo`.
+//! 2. Translates request → api call → JSON response.
+//!
+//! Multi-tenancy is structurally enforced: nothing in this module takes a
+//! tenant id as an argument. A handler only sees the `Repo` it was handed
+//! by the middleware.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use axum::body::Bytes;
+use axum::extract::{Multipart, Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+use omp_core::api::{AuthorOverride, Fields, ShowResult};
+use omp_core::manifest::FieldValue;
+use omp_core::OmpError;
+
+use crate::auth::{self, TenantRepo};
+use crate::AppState;
+
+pub fn router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/status", get(status))
+        .route("/files", get(list_files).post(post_file))
+        .route(
+            "/files/*path",
+            get(get_file).patch(patch_fields).delete(delete_file),
+        )
+        .route("/bytes/*path", get(get_bytes))
+        .route("/tree", get(tree_root))
+        .route("/tree/*path", get(tree_path))
+        .route("/commit", post(commit_route))
+        .route("/log", get(log_route))
+        .route("/diff", get(diff_route))
+        .route("/branches", get(list_branches).post(create_branch))
+        .route("/checkout", post(checkout_route))
+        .route("/test/ingest", post(test_ingest))
+        // Resumable upload sessions (docs/design/12-large-files.md).
+        .route("/uploads", post(post_upload))
+        .route(
+            "/uploads/:id",
+            axum::routing::patch(patch_upload_chunk).delete(delete_upload),
+        )
+        .route("/uploads/:id/commit", post(post_upload_commit))
+        .with_state(state)
+}
+
+// --- responses ---
+
+fn to_response(err: OmpError) -> Response {
+    let code = err.code();
+    let status = StatusCode::from_u16(code.http_status())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let body = json!({
+        "error": {
+            "code": code.as_str(),
+            "message": err.to_string(),
+        }
+    });
+    (status, Json(body)).into_response()
+}
+
+fn ok_json<T: Serialize>(v: T) -> Response {
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(v).unwrap_or(serde_json::Value::Null)),
+    )
+        .into_response()
+}
+
+// ---- compact-view helpers --------------------------------------------------
+//
+// The LLM interacting with OMP does not benefit from content-addressable
+// hashes at the default JSON surface — they're 64-char hex strings that burn
+// tokens and don't help the model decide anything. We strip them on read
+// endpoints unless the caller passes `?verbose=true`.
+//
+// Commit hashes stay in /log (they're needed for `?at=<hash>` time-travel).
+
+fn strip_keys(v: &mut serde_json::Value, keys: &[&str]) {
+    if let Some(obj) = v.as_object_mut() {
+        for k in keys {
+            obj.remove(*k);
+        }
+    }
+}
+
+fn compact_manifest(v: &mut serde_json::Value) {
+    strip_keys(
+        v,
+        &[
+            "source_hash",
+            "schema_hash",
+            "probe_hashes",
+            "ingester_version",
+        ],
+    );
+}
+
+fn compact_tree_entries(v: &mut serde_json::Value) {
+    if let Some(arr) = v.as_array_mut() {
+        for item in arr {
+            strip_keys(item, &["hash"]);
+        }
+    }
+}
+
+fn compact_file_list(v: &mut serde_json::Value) {
+    if let Some(arr) = v.as_array_mut() {
+        for item in arr {
+            strip_keys(item, &["manifest_hash", "source_hash"]);
+        }
+    }
+}
+
+fn compact_commit_list(v: &mut serde_json::Value) {
+    if let Some(arr) = v.as_array_mut() {
+        for item in arr {
+            strip_keys(item, &["tree", "parents"]);
+        }
+    }
+}
+
+fn ok_compact<T: Serialize>(v: T, compact: impl FnOnce(&mut serde_json::Value)) -> Response {
+    let mut val = serde_json::to_value(v).unwrap_or(serde_json::Value::Null);
+    compact(&mut val);
+    (StatusCode::OK, Json(val)).into_response()
+}
+
+async fn resolve_repo(state: &AppState, headers: &HeaderMap) -> std::result::Result<TenantRepo, Response> {
+    auth::resolve(state, headers).await.map_err(to_response)
+}
+
+/// Reject requests from encrypted tenants that try to hit a server-side
+/// ingest / validation path. Returns `Ok(())` for plaintext tenants and
+/// for endpoints that don't depend on plaintext.
+fn require_plaintext_mode(tr: &TenantRepo, endpoint: &str) -> std::result::Result<(), Response> {
+    if tr.encryption_mode.is_encrypted() {
+        return Err(to_response(OmpError::EncryptionModeMismatch(format!(
+            "endpoint {endpoint} expects plaintext objects; this tenant is encrypted — perform ingest client-side and upload ciphertext objects directly"
+        ))));
+    }
+    Ok(())
+}
+
+// --- handlers ---
+
+async fn healthz() -> Response {
+    ok_json(json!({ "ok": true }))
+}
+
+async fn status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.status() {
+        Ok(s) => ok_json(s),
+        Err(e) => to_response(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct ListFilesQuery {
+    at: Option<String>,
+    prefix: Option<String>,
+    /// Include `manifest_hash` and `source_hash` per entry. Default off.
+    #[serde(default)]
+    verbose: bool,
+}
+
+async fn list_files(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<ListFilesQuery>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.files(q.at.as_deref(), q.prefix.as_deref()) {
+        Ok(list) => {
+            if q.verbose {
+                ok_json(list)
+            } else {
+                ok_compact(list, compact_file_list)
+            }
+        }
+        Err(e) => to_response(e),
+    }
+}
+
+async fn post_file(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    mut mp: Multipart,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    if let Err(r) = require_plaintext_mode(&tr, "POST /files") {
+        return r;
+    }
+    let mut path: Option<String> = None;
+    let mut file_bytes: Option<Bytes> = None;
+    let mut file_type: Option<String> = None;
+    let mut fields: Fields = BTreeMap::new();
+    while let Ok(Some(field)) = mp.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "path" => path = Some(field.text().await.unwrap_or_default()),
+            "file" => file_bytes = Some(field.bytes().await.unwrap_or_default()),
+            "file_type" => file_type = Some(field.text().await.unwrap_or_default()),
+            n if n.starts_with("fields[") && n.ends_with(']') => {
+                let key = &n[7..n.len() - 1];
+                let value = field.text().await.unwrap_or_default();
+                fields.insert(key.to_string(), parse_scalar(&value));
+            }
+            _ => {
+                let _ = field.bytes().await;
+            }
+        }
+    }
+    let Some(path) = path else {
+        return to_response(OmpError::InvalidPath("missing path".into()));
+    };
+    let Some(bytes) = file_bytes else {
+        return to_response(OmpError::InvalidPath("missing file".into()));
+    };
+    match tr.repo.add(&path, &bytes, Some(fields), file_type.as_deref()) {
+        Ok(res) => ok_json(res),
+        Err(e) => to_response(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct AtQuery {
+    at: Option<String>,
+    #[serde(default)]
+    recursive: bool,
+    /// Include provenance hashes (source_hash, schema_hash, probe_hashes,
+    /// ingester_version for manifests; the entry hash for tree listings).
+    /// Default off — these are useful for replay and audit, but noisy in
+    /// day-to-day LLM browsing.
+    #[serde(default)]
+    verbose: bool,
+}
+
+async fn get_file(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(path): Path<String>,
+    Query(q): Query<AtQuery>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.show(&path, q.at.as_deref()) {
+        Ok(ShowResult::Manifest { manifest, .. }) => {
+            if q.verbose {
+                ok_json(manifest)
+            } else {
+                ok_compact(manifest, compact_manifest)
+            }
+        }
+        Ok(ShowResult::Blob { blob_hash, size, .. }) => {
+            // Blob responses are hash-centric by design (the caller asked for
+            // a blob-addressable object) — always include.
+            ok_json(json!({ "kind": "blob", "hash": blob_hash, "size": size }))
+        }
+        Ok(ShowResult::Tree { entries, .. }) => {
+            if q.verbose {
+                ok_json(entries)
+            } else {
+                ok_compact(entries, compact_tree_entries)
+            }
+        }
+        Err(e) => to_response(e),
+    }
+}
+
+async fn get_bytes(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(path): Path<String>,
+    Query(q): Query<AtQuery>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.bytes_of(&path, q.at.as_deref()) {
+        Ok(bytes) => ([(axum::http::header::CONTENT_TYPE, "application/octet-stream")], bytes)
+            .into_response(),
+        Err(e) => to_response(e),
+    }
+}
+
+async fn patch_fields(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(path): Path<String>,
+    Json(body): Json<BTreeMap<String, serde_json::Value>>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    if let Err(r) = require_plaintext_mode(&tr, "PATCH /files/*path") {
+        return r;
+    };
+    let mut updates: Fields = BTreeMap::new();
+    for (k, v) in body {
+        updates.insert(k, json_to_field(&v));
+    }
+    match tr.repo.patch_fields(&path, updates) {
+        Ok(m) => ok_json(m),
+        Err(e) => to_response(e),
+    }
+}
+
+async fn delete_file(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(path): Path<String>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.remove(&path) {
+        Ok(()) => ok_json(json!({"ok": true})),
+        Err(e) => to_response(e),
+    }
+}
+
+async fn tree_root(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<AtQuery>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.ls("", q.at.as_deref(), q.recursive) {
+        Ok(entries) => {
+            if q.verbose {
+                ok_json(entries)
+            } else {
+                ok_compact(entries, compact_tree_entries)
+            }
+        }
+        Err(e) => to_response(e),
+    }
+}
+
+async fn tree_path(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(path): Path<String>,
+    Query(q): Query<AtQuery>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.ls(&path, q.at.as_deref(), q.recursive) {
+        Ok(entries) => {
+            if q.verbose {
+                ok_json(entries)
+            } else {
+                ok_compact(entries, compact_tree_entries)
+            }
+        }
+        Err(e) => to_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct CommitBody {
+    message: String,
+    #[serde(default)]
+    author: Option<CommitAuthor>,
+}
+
+#[derive(Deserialize)]
+struct CommitAuthor {
+    name: Option<String>,
+    email: Option<String>,
+    timestamp: Option<String>,
+}
+
+async fn commit_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<CommitBody>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let override_ = body.author.map(|a| AuthorOverride {
+        name: a.name,
+        email: a.email,
+        timestamp: a.timestamp,
+    });
+    match tr.repo.commit(&body.message, override_) {
+        Ok(h) => ok_json(json!({ "hash": h })),
+        Err(e) => to_response(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct LogQuery {
+    path: Option<String>,
+    #[serde(default = "default_log_max")]
+    max: usize,
+    /// Include `tree` and `parents` hashes per entry. Default off.
+    /// Commit `hash` stays in the response regardless — callers need it for
+    /// `?at=<hash>` time-travel queries.
+    #[serde(default)]
+    verbose: bool,
+}
+
+fn default_log_max() -> usize {
+    50
+}
+
+async fn log_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<LogQuery>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.log_commits(q.path.as_deref(), q.max) {
+        Ok(log) => {
+            if q.verbose {
+                ok_json(log)
+            } else {
+                ok_compact(log, compact_commit_list)
+            }
+        }
+        Err(e) => to_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct DiffQuery {
+    from: String,
+    to: String,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+async fn diff_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<DiffQuery>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.diff(&q.from, &q.to, q.path.as_deref()) {
+        Ok(d) => ok_json(d),
+        Err(e) => to_response(e),
+    }
+}
+
+async fn list_branches(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.list_branches() {
+        Ok(b) => ok_json(b),
+        Err(e) => to_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateBranchBody {
+    name: String,
+    #[serde(default)]
+    start: Option<String>,
+}
+
+async fn create_branch(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<CreateBranchBody>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.branch(&b.name, b.start.as_deref()) {
+        Ok(()) => ok_json(json!({"ok": true})),
+        Err(e) => to_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct CheckoutBody {
+    #[serde(rename = "ref")]
+    ref_: String,
+}
+
+async fn checkout_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(b): Json<CheckoutBody>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.checkout(&b.ref_) {
+        Ok(()) => ok_json(json!({"ok": true})),
+        Err(e) => to_response(e),
+    }
+}
+
+async fn test_ingest(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    mut mp: Multipart,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    if let Err(r) = require_plaintext_mode(&tr, "POST /test/ingest") {
+        return r;
+    }
+    let mut path: Option<String> = None;
+    let mut file_bytes: Option<Bytes> = None;
+    let mut proposed_schema: Option<Bytes> = None;
+    let mut fields: Fields = BTreeMap::new();
+    while let Ok(Some(field)) = mp.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "path" => path = Some(field.text().await.unwrap_or_default()),
+            "file" => file_bytes = Some(field.bytes().await.unwrap_or_default()),
+            "proposed_schema" => proposed_schema = Some(field.bytes().await.unwrap_or_default()),
+            n if n.starts_with("fields[") && n.ends_with(']') => {
+                let key = &n[7..n.len() - 1];
+                let value = field.text().await.unwrap_or_default();
+                fields.insert(key.to_string(), parse_scalar(&value));
+            }
+            _ => {
+                let _ = field.bytes().await;
+            }
+        }
+    }
+    let Some(path) = path else {
+        return to_response(OmpError::InvalidPath("missing path".into()));
+    };
+    let Some(bytes) = file_bytes else {
+        return to_response(OmpError::InvalidPath("missing file".into()));
+    };
+    match tr.repo.test_ingest(&path, &bytes, Some(fields), proposed_schema.as_deref()) {
+        Ok(m) => ok_json(m),
+        Err(e) => to_response(e),
+    }
+}
+
+// --- helpers ---
+
+fn parse_scalar(v: &str) -> FieldValue {
+    if let Ok(i) = v.parse::<i64>() {
+        return FieldValue::Int(i);
+    }
+    if let Ok(f) = v.parse::<f64>() {
+        return FieldValue::Float(f);
+    }
+    if v == "true" {
+        return FieldValue::Bool(true);
+    }
+    if v == "false" {
+        return FieldValue::Bool(false);
+    }
+    FieldValue::String(v.to_string())
+}
+
+fn json_to_field(v: &serde_json::Value) -> FieldValue {
+    match v {
+        serde_json::Value::Null => FieldValue::Null,
+        serde_json::Value::Bool(b) => FieldValue::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                FieldValue::Int(i)
+            } else if let Some(f) = n.as_f64() {
+                FieldValue::Float(f)
+            } else {
+                FieldValue::Null
+            }
+        }
+        serde_json::Value::String(s) => FieldValue::String(s.clone()),
+        serde_json::Value::Array(arr) => {
+            FieldValue::List(arr.iter().map(json_to_field).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let mut out = std::collections::BTreeMap::new();
+            for (k, v) in map {
+                out.insert(k.clone(), json_to_field(v));
+            }
+            FieldValue::Object(out)
+        }
+    }
+}
+
+// ---- Upload-session routes (docs/design/12-large-files.md) -----------------
+
+#[derive(Deserialize)]
+struct OpenUploadBody {
+    declared_size: u64,
+}
+
+async fn post_upload(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<OpenUploadBody>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    if let Err(r) = require_plaintext_mode(&tr, "POST /uploads") {
+        return r;
+    }
+    match tr.repo.upload_open(body.declared_size) {
+        Ok(h) => (StatusCode::CREATED, Json(serde_json::to_value(h).unwrap())).into_response(),
+        Err(e) => to_response(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct UploadChunkQuery {
+    offset: u64,
+}
+
+async fn patch_upload_chunk(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(q): Query<UploadChunkQuery>,
+    body: Bytes,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.upload_write(&id, q.offset, &body) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => to_response(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct CommitUploadBody {
+    path: String,
+    #[serde(default)]
+    file_type: Option<String>,
+    #[serde(default)]
+    fields: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+async fn post_upload_commit(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(body): Json<CommitUploadBody>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    if let Err(r) = require_plaintext_mode(&tr, "POST /uploads/:id/commit") {
+        return r;
+    }
+    let fields = body.fields.map(|m| {
+        let mut out: Fields = BTreeMap::new();
+        for (k, v) in m {
+            out.insert(k, json_to_field(&v));
+        }
+        out
+    });
+    match tr.repo.upload_commit(&id, &body.path, fields, body.file_type.as_deref()) {
+        Ok(r) => ok_json(r),
+        Err(e) => to_response(e),
+    }
+}
+
+async fn delete_upload(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.upload_abort(&id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => to_response(e),
+    }
+}

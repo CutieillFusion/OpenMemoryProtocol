@@ -2,6 +2,8 @@
 
 OMP has four content-addressable object types. Each is stored identically on disk: zlib-compressed bytes of `<type> <size>\0<content>`, hashed by SHA-256 of the canonical `<type> <size>\0<content>` bytes. This is exactly Git's object-framing convention with SHA-256 instead of SHA-1.
 
+> A fifth type, `chunks`, is defined in [`12-large-files.md`](./12-large-files.md) to support per-file sizes up to 200 GB. It uses identical framing (`chunks <size>\0<content>`, zlib-compressed, SHA-256 over framed bytes) and does not change any of the four types below.
+
 ## Storage framing
 
 Every object in `.omp/objects/` is:

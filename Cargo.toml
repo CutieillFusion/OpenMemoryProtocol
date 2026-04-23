@@ -1,0 +1,48 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/omp-core",
+    "crates/omp-cli",
+    "crates/omp-crypto",
+    "crates/omp-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/openmemoryprotocol/openmemoryprotocol"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "1"
+sha2 = "0.10"
+flate2 = "1"
+omp-crypto = { path = "crates/omp-crypto" }
+fs2 = "0.4"
+toml = "0.8"
+toml_edit = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal", "fs", "io-util"] }
+hyper = "1"
+ciborium = "0.2"
+wasmtime = { version = "23", features = ["runtime", "cranelift"] }
+infer = "0.16"
+tower = "0.5"
+tower-http = { version = "0.5", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+url = "2"
+proptest = "1"
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

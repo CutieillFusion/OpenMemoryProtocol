@@ -82,7 +82,8 @@ Horizontal scale to multiple replicas becomes possible once lock state moves out
 
 - **Does not add LLM calls.** Tenant-aware or not, OMP still never calls out. User-provided fields are the only way enrichment data enters.
 - **Does not change probe determinism.** The tenant boundary is above the probe sandbox; probe inputs are still just `{bytes, kwargs}`, and probe determinism is unaffected.
-- **Does not introduce cross-tenant sharing.** No "public repos," no cross-tenant reads, no shared object deduplication in v1 of the tenant layer. Content-addressed dedup *across* tenants is a deferred optimization (attractive, but a per-object reference-counting concern that doesn't fit in iteration 2).
+- **Does not introduce cross-tenant sharing.** No "public repos," no cross-tenant reads, no shared object deduplication in v1 of the tenant layer. Content-addressed dedup *across* tenants is a deferred optimization (attractive, but a per-object reference-counting concern that doesn't fit in iteration 2). A cryptographic sharing primitive is designed in [`13-end-to-end-encryption.md`](./13-end-to-end-encryption.md) and lands with that feature, not here.
+- **Does not defend against the server operator.** The tenant boundary is a type-system boundary enforced by code OMP controls; anyone with shell on the host can read every tenant's plaintext from `.omp/objects/`. Closing that gap is the job of end-to-end encryption — see [`13-end-to-end-encryption.md`](./13-end-to-end-encryption.md).
 - **Does not define tenants-within-tenants.** No organizations, no teams, no sub-namespaces. One flat list of tenants. If organization structure is needed later, it wraps this layer rather than replacing it.
 
 ## Relationship to the course-project microservices story

@@ -50,7 +50,7 @@ Things we're not building in v1, with reasons:
 - **Event streaming (Kafka/NATS)**: only interesting once services exist.
 - **Web UI**: CLI + curl is enough for the demo.
 - **Remote protocol (push/pull)**: no collaboration use case in v1.
-- **Garbage collection / packfiles**: loose objects are fine at the scales v1 targets (thousands of files, not millions). Explicit consequence: `DELETE /files/{path}` (and ref / branch deletion) only unlinks objects from the reachable graph; the `.omp/objects/` files remain on disk until an `omp admin gc` command exists. v1 repos can therefore grow monotonically even through heavy delete-and-re-add churn. Iteration 2 ships `omp admin verify` (reachability + integrity check) as the precursor to a real `gc`; actual reclamation is in the "deferred" tier below.
+- **Garbage collection / packfiles**: loose objects are fine at the scales v1 targets (thousands of files, not millions). Explicit consequence: `DELETE /files/{path}` (and ref / branch deletion) only unlinks objects from the reachable graph; the `.omp/objects/` files remain on disk until an `omp admin gc` command exists. v1 repos can therefore grow monotonically even through heavy delete-and-re-add churn. Iteration 2 ships `omp admin verify` (reachability + integrity check) as the precursor to a real `gc`; actual reclamation is in the "deferred" tier below. Note: shipping the large-file feature from [`12-large-files.md`](./12-large-files.md) promotes `gc` from "deferred" to a prerequisite — a single 200 GB file produces ~12,500 chunk objects, and deletions that don't reclaim those accumulate fast.
 
 ## Iteration 2 — natural extensions
 
@@ -89,6 +89,14 @@ Implement three-way merge for trees. Fast-forward is trivial. Real merges:
 - Blob conflicts (schema files): fall back to the same two strategies.
 
 No semantic merge of TOML content in v2. Cost: ~1 week.
+
+### Large files (per-file sizes up to 200 GB)
+
+Introduces a `chunks` object type and streaming ingest. Preserves every fixed point from [`10-why-no-v2.md`](./10-why-no-v2.md). Makes `omp admin gc` a de-facto prerequisite. Full design in [`12-large-files.md`](./12-large-files.md). Cost: ~1 week for the core plus the HTTP upload-session surface.
+
+### End-to-end encryption
+
+Server stores ciphertext only; keys live on the client. Threat model, key hierarchy, share primitive (X25519 recipient wraps), and the client-side-ingest consequence are in [`13-end-to-end-encryption.md`](./13-end-to-end-encryption.md). All five fixed points from [`10-why-no-v2.md`](./10-why-no-v2.md) remain in place — the encryption layer sits above the object model. Naturally pairs with multi-tenancy (it's defense-in-depth on that layer) and with large files (chunk-at-a-time AEAD composes with the streaming pipeline). Cost: ~1.5–2 weeks, most of it on the share primitive and the client-side ingest path.
 
 ### Runtime performance
 

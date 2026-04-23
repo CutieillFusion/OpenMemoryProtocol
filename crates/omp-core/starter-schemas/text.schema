@@ -1,0 +1,34 @@
+file_type = "text"
+mime_patterns = ["text/*"]
+
+[fields.byte_size]
+source = "probe"
+probe = "file.size"
+type = "int"
+
+[fields.sha256]
+source = "probe"
+probe = "file.sha256"
+type = "string"
+
+[fields.mime]
+source = "probe"
+probe = "file.mime"
+type = "string"
+
+[fields.title]
+source = "user_provided"
+type = "string"
+required = false
+description = "Short title for the document; provided by an LLM agent or omitted."
+
+[fields.summary]
+source = "user_provided"
+type = "string"
+required = false
+description = "One-paragraph summary of the document's content."
+
+[fields.tags]
+source = "user_provided"
+type = "list[string]"
+required = false

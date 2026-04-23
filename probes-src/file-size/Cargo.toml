@@ -1,0 +1,13 @@
+[package]
+name = "file-size"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "file_size"
+crate-type = ["cdylib"]
+
+[dependencies]
+probe-common = { path = "../probe-common" }
+ciborium = { workspace = true }

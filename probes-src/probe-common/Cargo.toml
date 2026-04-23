@@ -1,0 +1,13 @@
+[package]
+name = "probe-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "probe_common"
+crate-type = ["rlib"]
+
+[dependencies]
+ciborium = { workspace = true }
+ciborium-io = { workspace = true }

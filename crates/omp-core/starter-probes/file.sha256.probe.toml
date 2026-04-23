@@ -1,0 +1,4 @@
+name = "file.sha256"
+returns = "string"
+accepts_kwargs = []
+description = "Hex SHA-256 of raw file bytes (blob's own hash, distinct from framed-object hash)."
