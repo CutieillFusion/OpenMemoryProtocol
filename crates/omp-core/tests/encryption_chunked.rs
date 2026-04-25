@@ -201,6 +201,132 @@ fn tampering_a_chunk_fails_open() {
 }
 
 #[test]
+fn reordering_chunks_fails_open() {
+    // Attacker with write access to the object store swaps the on-disk
+    // contents of two chunk blobs. Without position binding in the AAD each
+    // swapped ciphertext still opens cleanly under the content key, so the
+    // client would receive a silently reordered plaintext. The AAD binds
+    // `(chunk_index, total_chunks)`, so the swap must cause AEAD failure.
+    let td = TempDir::new().unwrap();
+    let _ = Repo::init(td.path()).unwrap();
+    set_chunk_size(&td, 64);
+    let repo = Repo::open(td.path()).unwrap();
+    stage_starter(&repo);
+    repo.commit("init", Some(fixed_author())).unwrap();
+
+    let keys = make_keys(&TenantId::local());
+    let plaintext: Vec<u8> = (0..200u32).map(|i| (i & 0xff) as u8).collect();
+    repo.add_encrypted("big.bin", &plaintext, None, Some("text"), &keys)
+        .unwrap();
+    repo.commit(
+        "add",
+        Some(AuthorOverride {
+            timestamp: Some("2026-04-22T01:00:00Z".into()),
+            ..fixed_author()
+        }),
+    )
+    .unwrap();
+
+    // Find two full-size chunk blobs (plaintext 64 → ciphertext 93) and swap
+    // their on-disk file contents.
+    let objects_dir = td.path().join(".omp/objects");
+    let mut full_chunk_paths: Vec<std::path::PathBuf> = Vec::new();
+    for bucket in fs::read_dir(&objects_dir).unwrap() {
+        let bucket = bucket.unwrap();
+        if !bucket.file_type().unwrap().is_dir() || bucket.file_name() == "tmp" {
+            continue;
+        }
+        for entry in fs::read_dir(bucket.path()).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let bytes = fs::read(&path).unwrap();
+            if let Ok(framed) = omp_core::object::decompress(&bytes) {
+                if let Ok((ty, content)) = omp_core::object::parse_framed(&framed) {
+                    if ty == omp_core::ObjectType::Blob && content.len() == 93 {
+                        full_chunk_paths.push(path);
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        full_chunk_paths.len() >= 2,
+        "need at least two full-size chunk blobs to swap, found {}",
+        full_chunk_paths.len()
+    );
+    let a_bytes = fs::read(&full_chunk_paths[0]).unwrap();
+    let b_bytes = fs::read(&full_chunk_paths[1]).unwrap();
+    fs::write(&full_chunk_paths[0], &b_bytes).unwrap();
+    fs::write(&full_chunk_paths[1], &a_bytes).unwrap();
+
+    let err = repo.show_encrypted("big.bin", None, &keys).unwrap_err();
+    assert!(
+        matches!(err, omp_core::OmpError::Unauthorized(_)),
+        "expected Unauthorized on chunk reorder, got {err:?}"
+    );
+}
+
+#[test]
+fn truncating_chunks_body_fails_open() {
+    // Attacker drops the trailing entry of the chunks-body. Position
+    // binding alone wouldn't catch this (remaining entries are still at
+    // their original positions) — binding `total_chunks` into the AAD is
+    // what makes the shortened list fail AEAD.
+    let td = TempDir::new().unwrap();
+    let _ = Repo::init(td.path()).unwrap();
+    set_chunk_size(&td, 64);
+    let repo = Repo::open(td.path()).unwrap();
+    stage_starter(&repo);
+    repo.commit("init", Some(fixed_author())).unwrap();
+
+    let keys = make_keys(&TenantId::local());
+    // 200 bytes / 64-byte chunks → 4 chunks.
+    let plaintext: Vec<u8> = (0..200u32).map(|i| (i & 0xff) as u8).collect();
+    let res = repo
+        .add_encrypted("big.bin", &plaintext, None, Some("text"), &keys)
+        .unwrap();
+    let source_hash = match res {
+        AddResult::Manifest { source_hash, .. } => source_hash,
+        other => panic!("expected Manifest, got {other:?}"),
+    };
+    repo.commit(
+        "add",
+        Some(AuthorOverride {
+            timestamp: Some("2026-04-22T01:00:00Z".into()),
+            ..fixed_author()
+        }),
+    )
+    .unwrap();
+
+    // Rewrite the chunks-body object at its original on-disk path with the
+    // last entry removed. `Store::get` returns bytes without re-hashing, so
+    // the manifest still resolves the (now-mismatched) object.
+    let hex = source_hash.hex();
+    let path = td
+        .path()
+        .join(".omp/objects")
+        .join(&hex[..2])
+        .join(&hex[2..]);
+    let bytes = fs::read(&path).unwrap();
+    let framed = omp_core::object::decompress(&bytes).unwrap();
+    let (ty, content) = omp_core::object::parse_framed(&framed).unwrap();
+    assert_eq!(ty, omp_core::ObjectType::Chunks);
+    let mut parsed = ChunksBody::parse(content).unwrap();
+    assert_eq!(parsed.entries.len(), 4);
+    parsed.entries.pop();
+    let new_content = parsed.serialize();
+    let new_framed = omp_core::object::frame(omp_core::ObjectType::Chunks, &new_content);
+    let new_compressed = omp_core::object::compress_framed(&new_framed).unwrap();
+    fs::write(&path, &new_compressed).unwrap();
+
+    let err = repo.show_encrypted("big.bin", None, &keys).unwrap_err();
+    assert!(
+        matches!(err, omp_core::OmpError::Unauthorized(_)),
+        "expected Unauthorized on chunks-body truncation, got {err:?}"
+    );
+}
+
+#[test]
 fn streaming_sha256_is_over_plaintext_under_encryption() {
     let td = TempDir::new().unwrap();
     let _ = Repo::init(td.path()).unwrap();

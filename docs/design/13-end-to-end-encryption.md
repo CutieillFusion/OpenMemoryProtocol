@@ -101,7 +101,7 @@ share <size>\0
 
 The chunked-Merkle design from [`12-large-files.md`](./12-large-files.md) composes cleanly:
 
-- Each chunk `blob` is encrypted with the file's content key, using `nonce = hkdf(content_key, "chunk" || chunk_index)` — unique per chunk, deterministic given the content key, so chunked uploads don't need per-chunk nonce bookkeeping.
+- Each chunk `blob` is encrypted with the file's content key, using `nonce = hkdf(content_key, "chunk" || be32(chunk_index))` — unique per chunk, deterministic given the content key, so chunked uploads don't need per-chunk nonce bookkeeping. The AEAD `aad = "omp-chunk" || be32(chunk_index) || be32(total_chunks)` binds every ciphertext to its position in, and the length of, the `chunks` body — reordering entries, swapping blobs between positions, or truncating the list all cause AEAD open to fail. (Single-blob files use `aad = "omp-blob"` with `chunk_index = 0`.)
 - The `chunks` object body (the ordered list of chunk hashes) stays plaintext. Its entries are hashes of ciphertext chunks — revealing them reveals nothing beyond what the server already knows from the object store.
 - The streaming ingest path from `12-large-files.md` wraps the chunk pipeline with an AEAD encryptor that operates on 64 KiB read windows. Memory footprint is unchanged: still one read buffer plus AEAD state plus zlib state, all small.
 - Streaming built-in probes (`file.sha256`, `file.size`) run on plaintext on the client before encryption, and their results go into the encrypted manifest.

@@ -617,6 +617,20 @@ impl Repo {
             ))
         })?;
 
+        // AAD binds each chunk to its position and the total count so
+        // reordering or truncating the chunks-body makes AEAD open fail.
+        let total_chunks: u32 = if plaintext.is_empty() {
+            0
+        } else {
+            let n = (plaintext.len() + chunk_size_usize - 1) / chunk_size_usize;
+            u32::try_from(n).map_err(|_| {
+                OmpError::internal(format!(
+                    "chunk count {n} exceeds u32 — file too large for v1"
+                ))
+            })?
+        };
+        let total_be = total_chunks.to_be_bytes();
+
         let mut entries: Vec<ChunkEntry> = Vec::new();
         let mut plaintext_hasher = Sha256::new();
         for (index, slice) in plaintext.chunks(chunk_size_usize).enumerate() {
@@ -628,7 +642,11 @@ impl Repo {
             plaintext_hasher.update(slice);
             let nonce = chunk_nonce::nonce_for_chunk(content_key, idx32)
                 .map_err(|e| OmpError::internal(format!("nonce_for_chunk: {e}")))?;
-            let ciphertext = aead::seal(content_key, &nonce, b"omp-chunk", slice)
+            let mut aad = [0u8; 9 + 4 + 4];
+            aad[..9].copy_from_slice(b"omp-chunk");
+            aad[9..13].copy_from_slice(&idx32.to_be_bytes());
+            aad[13..17].copy_from_slice(&total_be);
+            let ciphertext = aead::seal(content_key, &nonce, &aad, slice)
                 .map_err(|e| OmpError::internal(format!("seal chunk {index}: {e}")))?;
             let chunk_hash = self.store.put(ObjectType::Blob.as_str(), &ciphertext)?;
             entries.push(ChunkEntry {
@@ -711,8 +729,19 @@ impl Repo {
             }),
             "chunks" => {
                 let parsed = ChunksBody::parse(&body)?;
+                let total: u32 = u32::try_from(parsed.entries.len()).map_err(|_| {
+                    OmpError::Corrupt(
+                        "chunks body has more than u32::MAX entries".into(),
+                    )
+                })?;
+                let total_be = total.to_be_bytes();
                 let mut out = Vec::with_capacity(parsed.total_length() as usize);
-                for entry in &parsed.entries {
+                for (idx, entry) in parsed.entries.iter().enumerate() {
+                    let idx32 = u32::try_from(idx).map_err(|_| {
+                        OmpError::Corrupt(
+                            "chunks body has more than u32::MAX entries".into(),
+                        )
+                    })?;
                     let (chunk_ty, ct) = self.store.get(&entry.hash)?.ok_or_else(|| {
                         OmpError::NotFound(format!("chunk {}", entry.hash.hex()))
                     })?;
@@ -722,7 +751,11 @@ impl Repo {
                             entry.hash.hex()
                         )));
                     }
-                    let pt = aead::open(content_key, b"omp-chunk", &ct).map_err(|_| {
+                    let mut aad = [0u8; 9 + 4 + 4];
+                    aad[..9].copy_from_slice(b"omp-chunk");
+                    aad[9..13].copy_from_slice(&idx32.to_be_bytes());
+                    aad[13..17].copy_from_slice(&total_be);
+                    let pt = aead::open(content_key, &aad, &ct).map_err(|_| {
                         OmpError::Unauthorized(format!(
                             "unable to open chunk {}",
                             entry.hash.hex()
