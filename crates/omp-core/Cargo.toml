@@ -29,6 +29,7 @@ wasmtime = { workspace = true }
 infer = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

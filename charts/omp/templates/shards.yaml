@@ -1,0 +1,98 @@
+{{- if .Values.shard.enabled }}
+{{- range $i, $_ := until (int .Values.shard.count) }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "omp.fullname" $ }}-shard-{{ $i }}
+  labels:
+    {{- include "omp.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: shard
+    omp.io/shard-index: "{{ $i }}"
+spec:
+  serviceName: {{ include "omp.fullname" $ }}-shard-{{ $i }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "omp.name" $ }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: shard
+      omp.io/shard-index: "{{ $i }}"
+  template:
+    metadata:
+      labels:
+        {{- include "omp.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: shard
+        omp.io/shard-index: "{{ $i }}"
+    spec:
+      initContainers:
+        - name: init-repo
+          image: {{ include "omp.image" $ }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              if [ ! -d /data/.omp ]; then
+                omp init --repo /data
+              fi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: server
+          image: {{ include "omp.image" $ }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: ["omp-server"]
+          args:
+            - "--bind=0.0.0.0:{{ $.Values.shard.port }}"
+            - "--repo=/data"
+          ports:
+            - name: http
+              containerPort: {{ $.Values.shard.port }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml $.Values.shard.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ $.Values.storage.class }}
+        resources:
+          requests:
+            storage: {{ $.Values.storage.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "omp.fullname" $ }}-shard-{{ $i }}
+  labels:
+    {{- include "omp.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: shard
+    omp.io/shard-index: "{{ $i }}"
+spec:
+  ports:
+    - name: http
+      port: {{ $.Values.shard.port }}
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: {{ include "omp.name" $ }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: shard
+    omp.io/shard-index: "{{ $i }}"
+{{- end }}
+{{- end }}

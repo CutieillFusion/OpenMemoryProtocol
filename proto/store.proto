@@ -1,0 +1,112 @@
+// OMP object-store gRPC service.
+// See docs/design/14-microservice-decomposition.md.
+//
+// This is the only inter-service RPC contract — every other internal call is
+// HTTP/JSON. The Store service is a near-1:1 projection of the
+// `omp_core::store::ObjectStore` Rust trait.
+
+syntax = "proto3";
+
+package omp.store.v1;
+
+// ---- Object operations ------------------------------------------------------
+
+message PutRequest {
+  // The object's type tag ("blob" | "tree" | "manifest" | "commit" | "chunks").
+  string type = 1;
+  // The raw object content (without framing). The server applies the
+  // canonical `<type> <size>\0<content>` framing and SHA-256 hashes the
+  // framed bytes.
+  bytes content = 2;
+}
+
+message PutResponse {
+  // Hex-encoded SHA-256 of the framed bytes.
+  string hash = 1;
+}
+
+message GetRequest {
+  string hash = 1;
+}
+
+message GetResponse {
+  // Whether the hash existed.
+  bool found = 1;
+  // The object's type tag (only valid when `found = true`).
+  string type = 2;
+  // The raw object content with framing already stripped.
+  bytes content = 3;
+}
+
+message HasRequest {
+  string hash = 1;
+}
+
+message HasResponse {
+  bool present = 1;
+}
+
+// ---- Ref operations ---------------------------------------------------------
+
+message ReadRefRequest {
+  string name = 1;
+}
+
+message ReadRefResponse {
+  bool found = 1;
+  string hash = 2;
+}
+
+message WriteRefRequest {
+  string name = 1;
+  string hash = 2;
+}
+
+message WriteRefResponse {}
+
+message DeleteRefRequest {
+  string name = 1;
+}
+
+message DeleteRefResponse {}
+
+message IterRefsRequest {}
+
+message IterRefsItem {
+  string name = 1;
+  string hash = 2;
+}
+
+// ---- HEAD -------------------------------------------------------------------
+
+message ReadHeadRequest {}
+
+message ReadHeadResponse {
+  // Either "ref: refs/heads/main" (attached) or a raw hex hash (detached).
+  string value = 1;
+}
+
+message WriteHeadRequest {
+  string value = 1;
+}
+
+message WriteHeadResponse {}
+
+// ---- Service ----------------------------------------------------------------
+
+service Store {
+  // Object plane.
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Has(HasRequest) returns (HasResponse);
+
+  // Ref plane.
+  rpc ReadRef(ReadRefRequest) returns (ReadRefResponse);
+  rpc WriteRef(WriteRefRequest) returns (WriteRefResponse);
+  rpc DeleteRef(DeleteRefRequest) returns (DeleteRefResponse);
+  rpc IterRefs(IterRefsRequest) returns (stream IterRefsItem);
+
+  // HEAD plane.
+  rpc ReadHead(ReadHeadRequest) returns (ReadHeadResponse);
+  rpc WriteHead(WriteHeadRequest) returns (WriteHeadResponse);
+}

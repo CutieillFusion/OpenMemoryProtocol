@@ -1,0 +1,9 @@
+# Dev-cluster overrides. Single replica everything; small resources.
+storage:
+  size: 256Mi
+
+shard:
+  count: 2
+
+gateway:
+  allowDevTokens: true

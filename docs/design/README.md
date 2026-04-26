@@ -20,6 +20,11 @@ Start with the overview, then read the technical docs in order — each builds o
 12. [**11-multi-tenancy.md**](./11-multi-tenancy.md) — Tenant model, auth boundary, per-tenant namespace over `ObjectStore`, quota strategy. Headline feature of iteration 2.
 13. [**12-large-files.md**](./12-large-files.md) — Per-file sizes up to 200 GB via a new `chunks` object type, streaming ingest, and probe gating. Additive; preserves all five fixed points.
 14. [**13-end-to-end-encryption.md**](./13-end-to-end-encryption.md) — Client-side encryption so the server never sees plaintext; keys derived from a user passphrase, shares via age-style X25519 recipient wraps. Defense-in-depth on top of `11-multi-tenancy.md`.
+15. [**14-microservice-decomposition.md**](./14-microservice-decomposition.md) — Service seams (gateway, ingest, object-store, refs, query); hybrid wire (gRPC for the object-store data plane, HTTP/JSON for the control plane); HTTP `If-Match` for ref CAS; signed tenant context; one concrete cross-service flow.
+16. [**15-query-and-discovery.md**](./15-query-and-discovery.md) — Predicate grammar over manifest fields, cursor pagination, change feed. Reconciles Bet 1 with what the API actually delivers at scale.
+17. [**16-event-streaming.md**](./16-event-streaming.md) — Six event types over a Kafka/Redpanda broker; topic-per-type, tenant-partitioned; at-least-once delivery; broker as notification, not source of truth.
+18. [**17-deployment-k8s.md**](./17-deployment-k8s.md) — Per-service Deployment/StatefulSet shapes, Helm chart structure, scaling story for refs, network policies, dev vs. prod values files.
+19. [**18-observability.md**](./18-observability.md) — Three operator planes (logs, metrics, traces) plus a tenant-facing audit log stored as objects in the tree.
 
 ## How to give feedback
 
@@ -51,3 +56,8 @@ If a design decision spans multiple docs and you want to revisit it, flag it at 
 | 11-multi-tenancy | Tenant = unit of isolation; `TenantStore` wraps `ObjectStore`; Bearer-token auth middleware; per-tenant quotas and locks. |
 | 12-large-files | Files up to 200 GB via a chunked Merkle `chunks` object + streaming ingest; probes gate on `max_input_bytes`; no wire-format break. |
 | 13-end-to-end-encryption | Client holds the keys; server stores ciphertext; sharing via X25519 wraps. Probes move to the client. Fixed points untouched. |
+| 14-microservice-decomposition | Five services (gateway, ingest, object-store, refs, query); gRPC for the data plane only, HTTP/JSON for the rest; HTTP `If-Match` for ref CAS; signed tenant context; idempotency keys. |
+| 15-query-and-discovery | Predicate filtering over manifest fields, cursor pagination, change feed. Makes Bet 1 hold at hosted-multi-tenant scale. |
+| 16-event-streaming | Six event types on Kafka/Redpanda; tenant-partitioned topics; broker is notification optimization, not source of truth. |
+| 17-deployment-k8s | Helm chart with per-service Deployments/StatefulSets, mTLS via cert-manager, network policies, observability sub-charts, dev/prod values. |
+| 18-observability | Logs/metrics/traces for operators plus a tenant-facing audit log stored as objects; cardinality-aware metric labels; OTel tracing through probe spans. |

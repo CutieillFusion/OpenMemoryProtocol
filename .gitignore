@@ -2,3 +2,4 @@ target/
 /.omp/
 crates/omp-core/build/wasm/
 probes-src/target/
+.claude/

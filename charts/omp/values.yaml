@@ -1,0 +1,63 @@
+# Default values for OMP. Override with -f values-dev.yaml or --set k=v.
+
+# Image: a single image carrying every binary; per-component `command` selects.
+image:
+  repository: omp
+  tag: dev
+  pullPolicy: IfNotPresent
+
+# Storage class used by per-tenant PVCs and the omp-store PVC.
+storage:
+  class: standard
+  size: 1Gi
+
+# omp-store: gRPC service wrapping a DiskStore. Single replica (StatefulSet);
+# horizontal scale lands in iteration 2 once a non-disk backend is wired.
+store:
+  enabled: true
+  replicas: 1
+  port: 9001
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# omp-server "shard" backends. Each is a single-tenant repo on its own PVC,
+# fronted by the gateway with sha256(tenant_id) routing.
+shard:
+  enabled: true
+  count: 2
+  port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# omp-gateway: external HTTPS edge.
+gateway:
+  enabled: true
+  replicas: 1
+  port: 8080
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  # Set true to mint Bearer tokens of the form `dev-<tenant>` for any tenant.
+  # Convenient for kind-based dev; never enable in production.
+  allowDevTokens: true
+  # tokens: [{tokenSha256: "<hex>", tenant: "alice"}, ...]
+  tokens: []
+
+# Set true to disable a component for tests / partial deployments.
+omp_server_only: false

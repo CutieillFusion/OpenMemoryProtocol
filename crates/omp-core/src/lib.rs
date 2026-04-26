@@ -6,6 +6,7 @@
 //! authoritative design.
 
 pub mod api;
+pub mod audit;
 pub mod chunks;
 pub mod commit;
 pub mod config;
@@ -20,12 +21,14 @@ pub mod manifest;
 pub mod object;
 pub mod paths;
 pub mod probes;
+pub mod query;
 pub mod refs;
 pub mod registry;
 pub mod schema;
 pub mod share;
 pub mod store;
 pub mod tenant;
+pub mod time;
 pub mod toml_canonical;
 pub mod tree;
 pub mod uploads;

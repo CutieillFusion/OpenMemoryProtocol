@@ -1,0 +1,75 @@
+// OMP event-streaming wire types. See docs/design/16-event-streaming.md.
+//
+// Events live on a broker (Kafka/Redpanda) in topic-per-type form, partitioned
+// by tenant id. The wire format is protobuf — the broker ecosystem assumes
+// it, and the same proto types describe the in-memory bus used in tests.
+//
+// Six event types in v1; consumers ignore unknown types.
+
+syntax = "proto3";
+
+package omp.events.v1;
+
+// Common envelope wrapping every event regardless of type. Lets consumers
+// route by `type` without parsing the full payload.
+message Envelope {
+  uint32 version = 1;
+  string type = 2;             // dotted name, e.g. "commit.created"
+  string tenant = 3;
+  // ISO-8601 UTC.
+  string occurred_at = 4;
+  // OpenTelemetry trace id (16 bytes hex), if available.
+  string trace_id = 5;
+  // Optional idempotency key matching the producer's request idempotency
+  // key when the originating action accepted one.
+  string idempotency_key = 6;
+  // Marshalled event-specific payload (one of the messages below).
+  // Type is named in `type` above.
+  bytes payload = 7;
+}
+
+// 1. commit.created — published by the refs service after a successful commit.
+message CommitCreated {
+  string branch = 1;
+  string commit_hash = 2;
+  repeated string parent_hashes = 3;
+  repeated string paths_touched = 4;
+}
+
+// 2. ref.updated — published by refs after any ref change (including branches
+//    and HEAD).
+message RefUpdated {
+  string ref_name = 1;
+  string old_hash = 2;          // empty for create
+  string new_hash = 3;          // empty for delete
+}
+
+// 3. manifest.staged — published by ingest when a manifest enters the staging
+//    area (pre-commit). Useful for dev-time observability, not durability.
+message ManifestStaged {
+  string path = 1;
+  string manifest_hash = 2;
+  string blob_hash = 3;
+  string stage_id = 4;
+}
+
+// 4. commit.failed — published by refs when a commit fails (e.g. CAS conflict
+//    after retries).
+message CommitFailed {
+  string reason_code = 1;
+  string idempotency_key = 2;
+  repeated string attempted_paths = 3;
+}
+
+// 5. quota.exceeded — published by the gateway when a tenant trips a quota.
+message QuotaExceeded {
+  string quota_name = 1;
+  uint64 current = 2;
+  uint64 limit = 3;
+}
+
+// 6. gc.completed — published by the admin path on completion of a GC pass.
+message GcCompleted {
+  uint64 objects_reclaimed = 1;
+  uint64 bytes_reclaimed = 2;
+}

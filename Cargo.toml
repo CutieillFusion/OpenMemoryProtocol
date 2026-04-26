@@ -4,7 +4,13 @@ members = [
     "crates/omp-core",
     "crates/omp-cli",
     "crates/omp-crypto",
+    "crates/omp-proto",
     "crates/omp-server",
+    "crates/omp-events",
+    "crates/omp-gateway",
+    "crates/omp-store",
+    "crates/omp-store-client",
+    "crates/omp-tenant-ctx",
 ]
 
 [workspace.package]
@@ -42,6 +48,26 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "mul
 url = "2"
 proptest = "1"
 tempfile = "3"
+async-trait = "0.1"
+tonic = { version = "0.12", features = ["tls"] }
+tonic-build = { version = "0.12", default-features = false, features = ["prost", "transport"] }
+prost = "0.13"
+prost-types = "0.13"
+ed25519-dalek = { version = "2", features = ["rand_core", "std", "pkcs8"] }
+base64 = "0.22"
+rand = "0.8"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", default-features = false, features = ["http-listener"] }
+opentelemetry = "0.27"
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.28"
+omp-proto = { path = "crates/omp-proto" }
+omp-tenant-ctx = { path = "crates/omp-tenant-ctx" }
+rdkafka = { version = "0.36", features = ["cmake-build"] }
+futures = "0.3"
+async-stream = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 [profile.release]
 lto = "thin"

@@ -22,6 +22,9 @@ pub enum ObjectType {
     /// keys are themselves ciphertext. See
     /// `docs/design/13-end-to-end-encryption.md §Sharing`.
     Share,
+    /// Per-tenant audit log entry. CBOR body, hash-chained via `parent`.
+    /// See `docs/design/18-observability.md §Audit log`.
+    Audit,
 }
 
 impl ObjectType {
@@ -33,6 +36,7 @@ impl ObjectType {
             ObjectType::Commit => "commit",
             ObjectType::Chunks => "chunks",
             ObjectType::Share => "share",
+            ObjectType::Audit => "audit",
         }
     }
 
@@ -44,6 +48,7 @@ impl ObjectType {
             "commit" => Ok(ObjectType::Commit),
             "chunks" => Ok(ObjectType::Chunks),
             "share" => Ok(ObjectType::Share),
+            "audit" => Ok(ObjectType::Audit),
             other => Err(OmpError::Corrupt(format!("unknown object type: {other}"))),
         }
     }

@@ -1,0 +1,12 @@
+apiVersion: v2
+name: omp
+description: OpenMemoryProtocol — multi-tenant Git-style content store for LLM files
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/openmemoryprotocol/openmemoryprotocol
+keywords:
+  - git
+  - llm
+  - content-store
+  - microservices

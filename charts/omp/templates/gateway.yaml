@@ -1,0 +1,95 @@
+{{- if .Values.gateway.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "omp.fullname" . }}-gateway-config
+  labels:
+    {{- include "omp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+data:
+  gateway.toml: |
+    shards = [
+    {{- range $i, $_ := until (int .Values.shard.count) }}
+      "http://{{ include "omp.fullname" $ }}-shard-{{ $i }}:{{ $.Values.shard.port }}",
+    {{- end }}
+    ]
+    allow_dev_tokens = {{ .Values.gateway.allowDevTokens }}
+    {{- if .Values.gateway.tokens }}
+    [tokens]
+    {{- range .Values.gateway.tokens }}
+    "{{ .tokenSha256 }}" = "{{ .tenant }}"
+    {{- end }}
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "omp.fullname" . }}-gateway
+  labels:
+    {{- include "omp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "omp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        {{- include "omp.labels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: {{ include "omp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["omp-gateway"]
+          args:
+            - "--bind=0.0.0.0:{{ .Values.gateway.port }}"
+            - "--config=/etc/omp/gateway.toml"
+          ports:
+            - name: http
+              containerPort: {{ .Values.gateway.port }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/omp
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "omp.fullname" . }}-gateway-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "omp.fullname" . }}-gateway
+  labels:
+    {{- include "omp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  type: {{ .Values.gateway.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.gateway.port }}
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: {{ include "omp.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: gateway
+{{- end }}

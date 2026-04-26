@@ -1,0 +1,66 @@
+{{- if .Values.store.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "omp.fullname" . }}-store
+  labels:
+    {{- include "omp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: store
+spec:
+  serviceName: {{ include "omp.fullname" . }}-store
+  replicas: {{ .Values.store.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "omp.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: store
+  template:
+    metadata:
+      labels:
+        {{- include "omp.labels" . | nindent 8 }}
+        app.kubernetes.io/component: store
+    spec:
+      containers:
+        - name: store
+          image: {{ include "omp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["omp-store"]
+          args:
+            - "--bind=0.0.0.0:{{ .Values.store.port }}"
+            - "--repo=/data"
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.store.port }}
+          resources:
+            {{- toYaml .Values.store.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.storage.class }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "omp.fullname" . }}-store
+  labels:
+    {{- include "omp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: store
+spec:
+  clusterIP: None
+  ports:
+    - name: grpc
+      port: {{ .Values.store.port }}
+      targetPort: grpc
+  selector:
+    app.kubernetes.io/name: {{ include "omp.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: store
+{{- end }}

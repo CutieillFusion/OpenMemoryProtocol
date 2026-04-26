@@ -83,9 +83,7 @@ impl UploadManager {
         let dir = self.session_dir(&id);
         fs::create_dir_all(&dir).map_err(|e| OmpError::io(&dir, e))?;
 
-        let created_at = OffsetDateTime::now_utc()
-            .format(&Rfc3339)
-            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+        let created_at = crate::time::now_rfc3339();
         let state = SessionState {
             id: id.clone(),
             declared_size,

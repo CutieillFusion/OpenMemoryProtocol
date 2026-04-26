@@ -1,0 +1,18 @@
+[package]
+name = "omp-tenant-ctx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+ciborium = { workspace = true }
+ed25519-dalek = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }

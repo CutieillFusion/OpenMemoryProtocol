@@ -1,0 +1,28 @@
+[package]
+name = "omp-store-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "omp_store_client"
+path = "src/lib.rs"
+
+[dependencies]
+omp-core = { path = "../omp-core" }
+omp-proto = { workspace = true }
+omp-tenant-ctx = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+prost = { workspace = true }
+futures = { workspace = true }
+tokio-stream = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+omp-store = { path = "../omp-store" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

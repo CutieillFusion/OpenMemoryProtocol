@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use time::format_description::well_known::Rfc3339;
-use time::OffsetDateTime;
 
 use crate::commit::{Author, Commit};
 use crate::config::{LocalConfig, RepoConfig};
@@ -1513,6 +1511,103 @@ impl Repo {
         })
     }
 
+    /// Predicate-filtered, cursor-paginated query over manifests at `at`.
+    /// See `docs/design/15-query-and-discovery.md`. `predicate` of `None` is
+    /// "match everything". `cursor` is opaque (caller round-trips it).
+    pub fn query(
+        &self,
+        at: Option<&str>,
+        prefix: Option<&str>,
+        predicate: Option<&crate::query::Expr>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::query::QueryResult> {
+        // Resolve "at" to a concrete commit, so cursor-anchored pagination is
+        // stable across pages even if HEAD advances mid-query.
+        let resolved_at = self.resolve_at(at)?;
+
+        // Decode cursor.
+        let (cursor_commit, start_offset) = match cursor {
+            Some(c) => crate::query::decode_cursor(c)?,
+            None => (resolved_at.clone(), 0usize),
+        };
+        // If a cursor was provided, trust ITS commit (anchored snapshot).
+        let effective_at = cursor_commit.clone().or(resolved_at);
+        let tree_root = match self.root_tree(effective_at.as_deref())? {
+            Some(r) => r,
+            None => return Ok(crate::query::QueryResult {
+                matches: Vec::new(),
+                next_cursor: None,
+            }),
+        };
+
+        let entries = paths::walk(&self.store, &tree_root)?;
+        // Sorted walk so cursor offsets are stable.
+        let mut sorted: Vec<_> = entries
+            .into_iter()
+            .filter(|(_, mode, _)| *mode == Mode::Manifest)
+            .filter(|(p, _, _)| match prefix {
+                Some(pfx) => p.starts_with(pfx),
+                None => true,
+            })
+            .collect();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let limit = limit.clamp(1, 1000);
+        let mut matches: Vec<crate::query::QueryMatch> = Vec::new();
+        let mut next_offset: Option<usize> = None;
+
+        for (idx, (path, _mode, hash)) in sorted.iter().enumerate().skip(start_offset) {
+            let (_, content) = self
+                .store
+                .get(hash)?
+                .ok_or_else(|| OmpError::NotFound(format!("manifest {}", hash.hex())))?;
+            let manifest = Manifest::parse(&content)?;
+
+            let pass = match predicate {
+                None => true,
+                Some(expr) => crate::query::evaluate(expr, &manifest),
+            };
+            if !pass {
+                continue;
+            }
+
+            matches.push(crate::query::QueryMatch {
+                path: path.clone(),
+                manifest_hash: *hash,
+                source_hash: manifest.source_hash,
+                file_type: manifest.file_type,
+                fields: manifest.fields,
+            });
+            if matches.len() >= limit {
+                if idx + 1 < sorted.len() {
+                    next_offset = Some(idx + 1);
+                }
+                break;
+            }
+        }
+
+        let next_cursor = next_offset.map(|off| {
+            crate::query::encode_cursor(effective_at.as_deref(), off)
+        });
+
+        Ok(crate::query::QueryResult {
+            matches,
+            next_cursor,
+        })
+    }
+
+    /// Resolve `at` to a concrete commit hash string, or None for HEAD-on-empty.
+    fn resolve_at(&self, at: Option<&str>) -> Result<Option<String>> {
+        match at {
+            Some(s) => Ok(Some(s.to_string())),
+            None => match refs::resolve_head(&self.store)? {
+                Some(h) => Ok(Some(h.hex())),
+                None => Ok(None),
+            },
+        }
+    }
+
     // ---- internals ----
 
     fn build_manifest(
@@ -1971,7 +2066,5 @@ fn looks_like_text(bytes: &[u8]) -> bool {
 }
 
 fn clock_now() -> String {
-    OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+    crate::time::now_rfc3339()
 }

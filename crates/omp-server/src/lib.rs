@@ -5,6 +5,8 @@
 //! `routes.rs` pull the already-resolved `Repo` out of a request extension.
 
 pub mod auth;
+pub mod health;
+pub mod metrics;
 pub mod routes;
 
 use std::collections::HashMap;
@@ -16,6 +18,7 @@ use tokio::sync::Mutex;
 use omp_core::api::Repo;
 use omp_core::registry::TenantRegistry;
 use omp_core::tenant::TenantId;
+use omp_events::{EventBus, InMemoryBus};
 
 /// Runtime mode for the server.
 pub enum Mode {
@@ -36,6 +39,10 @@ pub enum Mode {
 
 pub struct AppState {
     pub mode: Mode,
+    /// Event bus for `commit.created`, `manifest.staged`, etc. See
+    /// `docs/design/16-event-streaming.md`. The default is an in-process
+    /// broadcast bus; production deployments swap in a Kafka-backed impl.
+    pub events: Arc<dyn EventBus>,
 }
 
 impl AppState {
@@ -43,6 +50,7 @@ impl AppState {
     pub fn single(repo: Arc<Repo>) -> Self {
         AppState {
             mode: Mode::NoAuth { repo },
+            events: Arc::new(InMemoryBus::default()),
         }
     }
 
@@ -57,6 +65,14 @@ impl AppState {
                 registry_path,
                 repos: Mutex::new(HashMap::new()),
             },
+            events: Arc::new(InMemoryBus::default()),
         })
+    }
+
+    /// Replace the default event bus. Useful for tests and for wiring a
+    /// Kafka-backed bus at startup.
+    pub fn with_events(mut self, bus: Arc<dyn EventBus>) -> Self {
+        self.events = bus;
+        self
     }
 }

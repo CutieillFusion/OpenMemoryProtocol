@@ -26,8 +26,13 @@ use crate::auth::{self, TenantRepo};
 use crate::AppState;
 
 pub fn router(state: Arc<AppState>) -> Router {
+    crate::metrics::init();
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/livez", get(crate::health::livez))
+        .route("/readyz", get(crate::health::readyz))
+        .route("/startupz", get(crate::health::startupz))
+        .route("/metrics", get(crate::health::metrics))
         .route("/status", get(status))
         .route("/files", get(list_files).post(post_file))
         .route(
@@ -43,6 +48,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/branches", get(list_branches).post(create_branch))
         .route("/checkout", post(checkout_route))
         .route("/test/ingest", post(test_ingest))
+        .route("/query", get(query_route))
+        .route("/audit", get(audit_route))
+        .route("/watch", get(watch_route))
         // Resumable upload sessions (docs/design/12-large-files.md).
         .route("/uploads", post(post_upload))
         .route(
@@ -51,6 +59,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/uploads/:id/commit", post(post_upload_commit))
         .with_state(state)
+        .layer(axum::middleware::from_fn(crate::metrics::record_request))
 }
 
 // --- responses ---
@@ -415,8 +424,37 @@ async fn commit_route(
         email: a.email,
         timestamp: a.timestamp,
     });
+    let tenant_id = tr.repo.tenant().as_str().to_string();
     match tr.repo.commit(&body.message, override_) {
-        Ok(h) => ok_json(json!({ "hash": h })),
+        Ok(h) => {
+            // Publish commit.created on the event bus. Per doc 16, this fires
+            // *after* the commit is durable in the store. Best-effort: a
+            // failed publish logs WARN but does not surface to the client.
+            let bus = state.events.clone();
+            let payload = omp_events::payload::CommitCreated {
+                branch: omp_core::refs::current_branch(tr.repo.store())
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                commit_hash: h.hex(),
+                parent_hashes: vec![],
+                paths_touched: vec![],
+            };
+            if let Ok(env) = omp_events::envelope_for(
+                omp_events::event_type::COMMIT_CREATED,
+                &tenant_id,
+                None,
+                None,
+                &payload,
+            ) {
+                tokio::spawn(async move {
+                    if let Err(e) = bus.publish(env).await {
+                        tracing::warn!(error = %e, "publish commit.created failed");
+                    }
+                });
+            }
+            ok_json(json!({ "hash": h }))
+        }
         Err(e) => to_response(e),
     }
 }
@@ -534,6 +572,134 @@ async fn checkout_route(
     };
     match tr.repo.checkout(&b.ref_) {
         Ok(()) => ok_json(json!({"ok": true})),
+        Err(e) => to_response(e),
+    }
+}
+
+// ---- /query (docs/design/15-query-and-discovery.md) -----------------------
+
+#[derive(Deserialize, Default)]
+struct QueryParams {
+    /// Predicate expression. Optional — absence means "match everything".
+    #[serde(default)]
+    r#where: Option<String>,
+    /// Restrict the walk to paths starting with this prefix.
+    #[serde(default)]
+    prefix: Option<String>,
+    /// Time-travel anchor: any ref expression. Defaults to HEAD.
+    #[serde(default)]
+    at: Option<String>,
+    /// Opaque cursor from a previous response.
+    #[serde(default)]
+    cursor: Option<String>,
+    /// Page size. Clamped to [1, 1000]; default 100.
+    #[serde(default = "default_query_limit")]
+    limit: usize,
+}
+
+fn default_query_limit() -> usize {
+    100
+}
+
+async fn query_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<QueryParams>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let parsed = match q.r#where.as_deref() {
+        Some(s) if !s.is_empty() => match omp_core::query::parse(s) {
+            Ok(e) => Some(e),
+            Err(err) => {
+                let body = json!({
+                    "error": {
+                        "code": "bad_query",
+                        "message": err.to_string(),
+                    }
+                });
+                return (StatusCode::BAD_REQUEST, Json(body)).into_response();
+            }
+        },
+        _ => None,
+    };
+    match tr.repo.query(
+        q.at.as_deref(),
+        q.prefix.as_deref(),
+        parsed.as_ref(),
+        q.cursor.as_deref(),
+        q.limit,
+    ) {
+        Ok(r) => ok_json(r),
+        Err(e) => to_response(e),
+    }
+}
+
+// ---- /watch (docs/design/15-query-and-discovery.md § Watch) ----------------
+//
+// SSE endpoint that projects events from the event bus to the caller. This
+// makes "the change feed is the broker projection" literally true (see
+// `docs/design/15-query-and-discovery.md` and `16-event-streaming.md`).
+
+async fn watch_route(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    use axum::response::sse::{Event, Sse};
+    use futures::StreamExt;
+
+    let mut sub = state.events.subscribe();
+    let stream = async_stream::stream! {
+        loop {
+            match sub.next().await {
+                Some(env) => {
+                    let payload = serde_json::json!({
+                        "type": env.r#type,
+                        "tenant": env.tenant,
+                        "occurred_at": env.occurred_at,
+                        "trace_id": env.trace_id,
+                    });
+                    yield Ok::<_, std::convert::Infallible>(
+                        Event::default().event(env.r#type.clone()).data(payload.to_string())
+                    );
+                }
+                None => break,
+            }
+        }
+    };
+    Sse::new(stream.boxed())
+        .keep_alive(axum::response::sse::KeepAlive::default())
+}
+
+// ---- /audit (docs/design/18-observability.md § Audit log) -----------------
+
+#[derive(Deserialize, Default)]
+struct AuditQuery {
+    /// Maximum number of entries to return. Default 100.
+    #[serde(default = "default_audit_limit")]
+    limit: usize,
+}
+
+fn default_audit_limit() -> usize {
+    100
+}
+
+async fn audit_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<AuditQuery>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let limit = q.limit.clamp(1, 1000);
+    match omp_core::audit::read_chain_verified(tr.repo.store(), limit) {
+        Ok((entries, verified)) => ok_json(json!({
+            "entries": entries,
+            "verified": verified,
+        })),
         Err(e) => to_response(e),
     }
 }
