@@ -40,6 +40,12 @@ COPY --from=web /web/build /src/frontend/build
 ENV OMP_SKIP_UI_BUILD=1
 
 RUN rustup target add wasm32-unknown-unknown
+
+# Compile and stage the starter-pack wasm probes that omp-core embeds
+# via include_bytes! at compile time. build/wasm/ is gitignored, so we
+# need to build it before invoking cargo on the workspace.
+RUN ./scripts/build-probes.sh
+
 RUN cargo build --release \
         -p omp-cli \
         -p omp-server \
