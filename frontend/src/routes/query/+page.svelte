@@ -1,22 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
-  import { query as runQuery, ApiError } from '$lib/api';
-  import type { QueryResult } from '$lib/types';
+  import { query as runQuery, getSchemas, ApiError } from '$lib/api';
+  import type { QueryResult, Schema } from '$lib/types';
   import { describeField, fieldKind, shortHash } from '$lib/format';
+  import { parseUnified, TokenizeError } from '$lib/queryLang';
+  import QueryEditor from '$lib/components/QueryEditor.svelte';
 
   const HISTORY_KEY = 'omp.queryHistory';
   const HISTORY_MAX = 12;
+  const DEFAULT_LIMIT = 100;
 
   let where = '';
-  let prefix = '';
-  let at = '';
-  let limit = 100;
   let cursor: string | null = null;
   let result: QueryResult | null = null;
   let loading = false;
   let error: string | null = null;
   let history: string[] = [];
+  let schemas: Schema[] = [];
+  // Tracks the resolved `at` from the latest run, used to thread `?at=` through file links.
+  let lastAt: string | undefined;
 
   function loadHistory() {
     if (typeof localStorage === 'undefined') return;
@@ -36,7 +39,15 @@
     }
   }
 
-  onMount(loadHistory);
+  onMount(async () => {
+    loadHistory();
+    try {
+      schemas = await getSchemas();
+    } catch (e) {
+      // Autocomplete falls back to built-in fields; surface but don't block.
+      console.warn('failed to load schemas for autocomplete:', e);
+    }
+  });
 
   async function run(append = false) {
     loading = true;
@@ -46,12 +57,21 @@
       result = null;
     }
     try {
+      let parsed: { where?: string; prefix?: string; at?: string; limit?: number };
+      try {
+        parsed = parseUnified(where);
+      } catch (e) {
+        if (e instanceof TokenizeError) {
+          throw new Error(`query syntax: ${e.message}`);
+        }
+        throw e;
+      }
       const r = await runQuery({
-        where: where.trim() || undefined,
-        prefix: prefix.trim() || undefined,
-        at: at.trim() || undefined,
+        where: parsed.where,
+        prefix: parsed.prefix,
+        at: parsed.at,
         cursor: append ? cursor ?? undefined : undefined,
-        limit
+        limit: parsed.limit ?? DEFAULT_LIMIT,
       });
       if (append && result) {
         result = { matches: [...result.matches, ...r.matches], next_cursor: r.next_cursor };
@@ -60,6 +80,7 @@
         if (where.trim()) pushHistory(where.trim());
       }
       cursor = r.next_cursor;
+      lastAt = parsed.at;
     } catch (e) {
       error = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
     } finally {
@@ -159,9 +180,18 @@ file_type = "pdf" AND (pages &gt; 10 OR tags contains "draft")</pre>
 
       <section class="docs-section">
         <h3>Filters &amp; pagination</h3>
+        <p class="docs-prose">
+          Trail the predicate with <code>prefix</code>, <code>at</code>, and <code>limit</code>
+          clauses. Modifiers can appear in any order; each one consumes its
+          literal value (a string for <code>prefix</code>/<code>at</code>, an
+          int for <code>limit</code>).
+        </p>
+        <pre class="docs-code">file_type = "pdf" prefix "reports/" limit 50
+pages &gt; 10 at "HEAD~1"
+prefix "reports/2026/"</pre>
         <ul class="docs-list">
-          <li><code>prefix</code> — restrict the walk to a path prefix (e.g. <code>reports/2026/</code>).</li>
-          <li><code>at</code> — time-travel to a branch, commit hash, or <code>HEAD~n</code>.</li>
+          <li><code>prefix</code> — restrict the walk to a path prefix (e.g. <code>"reports/2026/"</code>).</li>
+          <li><code>at</code> — time-travel ref. Use a quoted string for <code>"HEAD~1"</code> or a bare ident for <code>HEAD</code>.</li>
           <li><code>limit</code> — page size, default 100, max 1000.</li>
           <li>Pages auto-cap at 1 MB serialized; click <em>load more</em> to follow the cursor.</li>
         </ul>
@@ -190,6 +220,14 @@ file_type = "pdf" AND (pages &gt; 10 OR tags contains "draft")</pre>
             <button class="example-btn" type="button" on:click={() => pickExample('NOT file_type = "audio"')}>{`NOT file_type = "audio"`}</button>
             <span class="docs-prose">Everything except audio.</span>
           </li>
+          <li>
+            <button class="example-btn" type="button" on:click={() => pickExample('file_type = "pdf" prefix "reports/" limit 25')}>{`file_type = "pdf" prefix "reports/" limit 25`}</button>
+            <span class="docs-prose">PDFs under <code>reports/</code>, first 25 results.</span>
+          </li>
+          <li>
+            <button class="example-btn" type="button" on:click={() => pickExample('exists(title) at "HEAD~1"')}>{`exists(title) at "HEAD~1"`}</button>
+            <span class="docs-prose">Manifests with a title at the previous commit.</span>
+          </li>
         </ul>
       </section>
 
@@ -212,33 +250,11 @@ file_type = "pdf" AND (pages &gt; 10 OR tags contains "draft")</pre>
 
   <form on:submit|preventDefault={() => run()} class="stack--lg">
     <div class="field">
-      <label class="label" for="w">where</label>
-      <textarea
-        id="w"
-        class="textarea"
-        bind:value={where}
-        placeholder='file_type = "pdf" AND pages > 10'
-      ></textarea>
-    </div>
-    <div class="flex" style="gap: 16px; flex-wrap: wrap;">
-      <div class="field" style="flex: 1; min-width: 200px;">
-        <label class="label" for="pf">prefix</label>
-        <input id="pf" class="input mono" bind:value={prefix} placeholder="reports/" />
-      </div>
-      <div class="field" style="flex: 1; min-width: 200px;">
-        <label class="label" for="at">at</label>
-        <input id="at" class="input mono" bind:value={at} placeholder="HEAD" />
-      </div>
-      <div class="field" style="width: 120px;">
-        <label class="label" for="lim">limit</label>
-        <input
-          id="lim"
-          class="input"
-          type="number"
-          min="1"
-          max="1000"
-          bind:value={limit}
-        />
+      <label class="label" for="w">query</label>
+      <QueryEditor bind:value={where} {schemas} onSubmit={() => run()} />
+      <div class="muted text-xs" style="margin-top: 4px;">
+        Predicate plus optional trailing <code>prefix</code> / <code>at</code> / <code>limit</code> clauses.
+        <kbd>Ctrl/⌘ Enter</kbd> to run.
       </div>
     </div>
     <div class="flex flex--between">
@@ -283,7 +299,7 @@ file_type = "pdf" AND (pages &gt; 10 OR tags contains "draft")</pre>
             <tbody>
               {#each result.matches as m}
                 <tr>
-                  <td><a href="{base}/file/{m.path}{at ? `?at=${encodeURIComponent(at)}` : ''}" class="mono">{m.path}</a></td>
+                  <td><a href="{base}/file/{m.path}{lastAt ? `?at=${encodeURIComponent(lastAt)}` : ''}" class="mono">{m.path}</a></td>
                   <td><span class="tag">{m.file_type}</span></td>
                   {#each cols as c}
                     <td class="mono text-xs">

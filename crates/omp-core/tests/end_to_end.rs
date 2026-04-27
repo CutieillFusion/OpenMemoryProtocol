@@ -249,6 +249,56 @@ fn quota_exceeded_is_reported() {
     );
 }
 
+#[test]
+fn list_schemas_returns_starter_then_committed() {
+    let td = TempDir::new().unwrap();
+    let repo = Repo::init(td.path()).unwrap();
+
+    // Pre-commit: starter schemas dropped on disk by `init` are visible.
+    let pre = repo.list_schemas(None).unwrap();
+    let names: Vec<_> = pre.iter().map(|s| s.file_type.as_str()).collect();
+    assert!(names.contains(&"text"), "expected `text` schema, got {names:?}");
+    let text = pre.iter().find(|s| s.file_type == "text").unwrap();
+    assert!(
+        text.fields.iter().any(|f| !f.r#type.is_empty()),
+        "schema fields should carry a type label"
+    );
+
+    // After committing the starter pack, the same schemas are visible at HEAD.
+    stage_starter_artifacts(&repo);
+    let _ = repo.commit("init", Some(fixed_author())).unwrap();
+    let post = repo.list_schemas(None).unwrap();
+    let post_names: Vec<_> = post.iter().map(|s| s.file_type.as_str()).collect();
+    assert!(post_names.contains(&"text"));
+}
+
+#[test]
+fn list_schemas_at_old_commit_excludes_later_writes() {
+    let td = TempDir::new().unwrap();
+    let repo = Repo::init(td.path()).unwrap();
+    stage_starter_artifacts(&repo);
+    let c1 = repo.commit("init", Some(fixed_author())).unwrap();
+
+    // Drop a new schema and commit it.
+    let extra = br#"file_type = "demo"
+mime_patterns = ["application/x-demo"]
+
+[fields.note]
+source = "user_provided"
+type = "string"
+required = false
+"#;
+    repo.add("schemas/demo.schema", extra, None, None).unwrap();
+    let _c2 = repo.commit("add demo schema", Some(fixed_author())).unwrap();
+
+    let head = repo.list_schemas(None).unwrap();
+    assert!(head.iter().any(|s| s.file_type == "demo"));
+
+    let old = repo.list_schemas(Some(&c1.hex())).unwrap();
+    assert!(!old.iter().any(|s| s.file_type == "demo"),
+        "demo schema didn't exist at c1, should not appear");
+}
+
 // Helpers ---------------------------------------------------------------------
 
 fn stage_starter_artifacts(repo: &Repo) {

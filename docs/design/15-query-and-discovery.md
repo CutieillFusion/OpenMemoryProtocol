@@ -47,10 +47,30 @@ One new endpoint, plus extensions to the two existing ones:
 | `GET` | `/query` | Predicate query over manifests. `?where=<expr>&prefix=<path>&at=<ref>&cursor=<c>&limit=<n>`. Returns `{matches: [...], next_cursor: "..." \| null}`. |
 | `GET` | `/files` | Existing flat list, now with `?where=<expr>` (subset of `/query`'s grammar) and `?cursor=` / `?limit=`. |
 | `GET` | `/tree/{path}` | Existing directory list, with `?cursor=` / `?limit=` for very wide directories. |
+| `GET` | `/schemas` | List schema summaries at the given ref. `?at=<ref>` (default HEAD). Returns `[{file_type, mime_patterns, fields: [{name, type, required, description?}]}]`. Drives query autocomplete in the web UI; not needed by the predicate evaluator itself. |
 
 All accept `?at=<ref>` for time-travel queries. Time-travel through Bet 1 is the demo moment from [`00-overview.md`](./00-overview.md), and predicates make it actually useful: "what did the LLM tag as `policy` on April 10 vs. April 21?"
 
 `/query` returns each match as `{path, manifest_hash, source_hash, file_type, fields}` — the same shape as `/files` plus a `fields` projection so the agent doesn't immediately have to issue N follow-up `GET /files/{path}` calls. A `?fields=` query parameter narrows the projection (`?fields=title,tags,pages`) to keep response size bounded.
+
+### Web UI: unified query syntax
+
+The browser-facing query editor accepts a single piece of text combining the
+predicate and the `prefix` / `at` / `limit` parameters:
+
+```
+file_type = "pdf" AND pages > 10  prefix "reports/" at "HEAD~1" limit 50
+```
+
+Modifier clauses are recognized only when they appear at the trailing top
+level (paren-depth 0) and are followed by a literal value. A field literally
+named `prefix` therefore still parses normally inside the predicate
+(`prefix = "x"` stays in the `where` clause). The frontend strips the
+modifier clauses before issuing the HTTP `/query` request, so the wire
+protocol is unchanged from the table above. The reverse — having the
+backend grammar parse the unified syntax — is a future change tracked as a
+follow-up; until then, CLI / direct-HTTP consumers continue to pass the
+parameters as separate query-string fields.
 
 ## Cursor pagination
 

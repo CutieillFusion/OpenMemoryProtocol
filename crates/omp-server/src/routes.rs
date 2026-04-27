@@ -49,6 +49,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/checkout", post(checkout_route))
         .route("/test/ingest", post(test_ingest))
         .route("/query", get(query_route))
+        .route("/schemas", get(list_schemas_route))
         .route("/audit", get(audit_route))
         .route("/watch", get(watch_route))
         // Resumable upload sessions (docs/design/12-large-files.md).
@@ -647,6 +648,32 @@ async fn query_route(
         q.limit,
     ) {
         Ok(r) => ok_json(r),
+        Err(e) => to_response(e),
+    }
+}
+
+// ---- /schemas (drives web-UI query autocomplete) -------------------------
+//
+// Lists schema summaries at the given ref (default HEAD). Returns just the
+// fields/types the autocompleter needs — no probe wiring or fallback shape.
+
+#[derive(Deserialize, Default)]
+struct SchemasParams {
+    #[serde(default)]
+    at: Option<String>,
+}
+
+async fn list_schemas_route(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<SchemasParams>,
+) -> Response {
+    let tr = match resolve_repo(&state, &headers).await {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    match tr.repo.list_schemas(q.at.as_deref()) {
+        Ok(s) => ok_json(s),
         Err(e) => to_response(e),
     }
 }

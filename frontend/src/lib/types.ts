@@ -108,6 +108,35 @@ export interface QueryResult {
   next_cursor: string | null;
 }
 
+// `GET /schemas` — wire format from omp-core/src/schema.rs::SchemaSummary.
+// Drives query-editor autocomplete: each schema's fields surface as
+// completions.
+export type SchemaFieldType =
+  | 'string'
+  | 'int'
+  | 'float'
+  | 'bool'
+  | 'datetime'
+  | 'list[string]'
+  | 'list[int]'
+  | 'list[float]'
+  | 'list[bool]'
+  | 'list[datetime]'
+  | 'object';
+
+export interface SchemaField {
+  name: string;
+  type: SchemaFieldType | string;
+  required: boolean;
+  description?: string;
+}
+
+export interface Schema {
+  file_type: string;
+  mime_patterns: string[];
+  fields: SchemaField[];
+}
+
 export type AuditValue =
   | null
   | string

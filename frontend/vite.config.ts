@@ -6,6 +6,7 @@ const apiPaths = [
   '/bytes',
   '/tree',
   '/query',
+  '/schemas',
   '/watch',
   '/commit',
   '/log',

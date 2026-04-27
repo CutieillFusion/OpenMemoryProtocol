@@ -71,6 +71,24 @@ impl FieldType {
         })
     }
 
+    /// Inverse of `parse`. Used by the wire-format `SchemaSummary` so the
+    /// frontend autocompleter can render a type label next to each field.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FieldType::String => "string",
+            FieldType::Int => "int",
+            FieldType::Float => "float",
+            FieldType::Bool => "bool",
+            FieldType::Datetime => "datetime",
+            FieldType::ListString => "list[string]",
+            FieldType::ListInt => "list[int]",
+            FieldType::ListFloat => "list[float]",
+            FieldType::ListBool => "list[bool]",
+            FieldType::ListDatetime => "list[datetime]",
+            FieldType::Object => "object",
+        }
+    }
+
     /// For probe return type: `"int?"` etc. — the `?` means nullable.
     pub fn parse_nullable(s: &str) -> Result<(Self, bool)> {
         match s.strip_suffix('?') {
@@ -197,6 +215,25 @@ pub struct Schema {
     pub render: Option<RenderHint>,
 }
 
+/// Wire-format projection of `Schema` returned by `GET /schemas`. The web UI
+/// uses these to drive query autocomplete; it doesn't need the source/probe
+/// machinery, so we ship a minimal shape.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SchemaSummary {
+    pub file_type: String,
+    pub mime_patterns: Vec<String>,
+    pub fields: Vec<SchemaFieldSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SchemaFieldSummary {
+    pub name: String,
+    pub r#type: String,
+    pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
 impl Schema {
     /// Parse schema TOML. Does not yet resolve probe references — that needs a
     /// tree. For pure-syntactic validation, use `parse` and then call
@@ -244,6 +281,25 @@ impl Schema {
             fields: ordered,
             render,
         })
+    }
+
+    /// Wire-format summary used by `GET /schemas`. Strips internal source/
+    /// fallback shape — the autocompleter only needs name + type + description.
+    pub fn summary(&self) -> SchemaSummary {
+        SchemaSummary {
+            file_type: self.file_type.clone(),
+            mime_patterns: self.mime_patterns.clone(),
+            fields: self
+                .fields
+                .iter()
+                .map(|f| SchemaFieldSummary {
+                    name: f.name.clone(),
+                    r#type: f.type_.as_str().to_string(),
+                    required: f.required,
+                    description: f.description.clone(),
+                })
+                .collect(),
+        }
     }
 
     /// Resolve the render hint to apply for this schema. Returns the explicit

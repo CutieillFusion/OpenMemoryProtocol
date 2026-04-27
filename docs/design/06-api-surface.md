@@ -99,6 +99,12 @@ An `axum` app in `crates/omp-server/src/main.rs` mounts these routes. Each route
 | `POST` | `/branches` | Create a branch. Body: `{name, start?}`. |
 | `POST` | `/checkout` | Switch HEAD to a ref. Body: `{ref}`. |
 
+### Schemas (introspection)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`  | `/schemas` | List schema summaries at the given ref (default HEAD). Supports `?at=<ref>`. Returns `[{file_type, mime_patterns, fields: [{name, type, required, description?}]}]`. Read-only projection of the `schemas/<file_type>.schema` blobs in the tree — useful for the web UI to drive query autocomplete and upload-form hints without parsing TOML on the client. To *write* a schema, POST it to `/files` like any other blob. |
+
 ### Dry-run
 
 | Method | Path | Description |

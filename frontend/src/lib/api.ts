@@ -14,6 +14,7 @@ import type {
   Manifest,
   QueryResult,
   RepoStatus,
+  Schema,
   TreeEntry,
   UploadHandle
 } from './types';
@@ -228,6 +229,9 @@ export const query = (
   params: { where?: string; prefix?: string; at?: string; cursor?: string; limit?: number } = {},
   signal?: AbortSignal
 ) => request<QueryResult>('/query', { query: params, signal });
+
+export const getSchemas = (params: { at?: string } = {}, signal?: AbortSignal) =>
+  request<Schema[]>('/schemas', { query: params, signal });
 
 export const audit = (params: { limit?: number } = {}, signal?: AbortSignal) =>
   request<AuditResponse>('/audit', { query: params, signal });

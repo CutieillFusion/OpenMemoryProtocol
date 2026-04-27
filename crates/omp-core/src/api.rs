@@ -1978,6 +1978,56 @@ impl Repo {
         })
     }
 
+    /// List schemas at the given ref (default HEAD) as wire-format summaries.
+    /// Walks the `schemas/` subtree, parses each `*.schema` blob, and falls
+    /// back to the working-directory `schemas/` dir for the pre-first-commit
+    /// case (mirrors `load_all_schemas_with_key`). Result is sorted by
+    /// file_type for stable output.
+    pub fn list_schemas(&self, at: Option<&str>) -> Result<Vec<crate::schema::SchemaSummary>> {
+        let mut by_type: BTreeMap<String, crate::schema::SchemaSummary> = BTreeMap::new();
+        if let Some(root) = self.root_tree(at)? {
+            if let Some((Mode::Tree, subtree)) =
+                paths::get_at_with_key(&self.store, "schemas", &root, None)?
+            {
+                let entries = paths::walk_with_key(&self.store, &subtree, None)?;
+                for (name, mode, hash) in entries {
+                    if mode != Mode::Blob {
+                        continue;
+                    }
+                    let Some(stem) = name.strip_suffix(".schema") else {
+                        continue;
+                    };
+                    if let Some((_, content)) = self.store.get(&hash)? {
+                        if let Ok(s) = Schema::parse(&content, stem) {
+                            by_type.insert(s.file_type.clone(), s.summary());
+                        }
+                    }
+                }
+            }
+        }
+        // Pre-first-commit: surface schemas dropped on disk by `init`.
+        if at.is_none() {
+            let schemas_dir = self.root.join("schemas");
+            if schemas_dir.is_dir() {
+                for entry in fs::read_dir(&schemas_dir).map_err(|e| OmpError::io(&schemas_dir, e))? {
+                    let entry = entry.map_err(|e| OmpError::io(&schemas_dir, e))?;
+                    let p = entry.path();
+                    if p.extension().and_then(|s| s.to_str()) != Some("schema") {
+                        continue;
+                    }
+                    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                    let bytes = fs::read(&p).map_err(|e| OmpError::io(&p, e))?;
+                    if let Ok(s) = Schema::parse(&bytes, stem) {
+                        by_type
+                            .entry(s.file_type.clone())
+                            .or_insert_with(|| s.summary());
+                    }
+                }
+            }
+        }
+        Ok(by_type.into_values().collect())
+    }
+
     /// Resolve `at` to a concrete commit hash string, or None for HEAD-on-empty.
     fn resolve_at(&self, at: Option<&str>) -> Result<Option<String>> {
         match at {
