@@ -13,10 +13,25 @@ Full design docs live under [`docs/design/`](docs/design/).
 ```
 rustup target add wasm32-unknown-unknown
 scripts/build-probes.sh          # compiles the starter probe pack
-cargo build --release            # builds omp, omp-server, omp-core
+cd frontend && npm ci && npm run build && cd ..   # builds the embedded web UI
+cargo build --release            # builds every binary
 ```
 
-The release binaries land at `target/release/omp` and `target/release/omp-server`.
+The release binaries land at `target/release/{omp, omp-server, omp-store, omp-gateway}`.
+
+The gateway's default `embed-ui` Cargo feature compiles `frontend/build/` into
+the `omp-gateway` binary (served at `/ui/*`; see
+[`docs/design/19-web-frontend.md`](docs/design/19-web-frontend.md)). If you
+don't have Node installed and only want the API surface, build the gateway
+without the UI:
+
+```
+cargo build --release -p omp-gateway --no-default-features
+```
+
+`OMP_SKIP_UI_BUILD=1` skips the build script's `npm run build` invocation
+when you've staged `frontend/build/` yourself — this is what the Dockerfile
+does (Node runs in a separate stage).
 
 ## Try it
 

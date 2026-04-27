@@ -509,11 +509,15 @@ pub fn decode_cursor(s: &str) -> crate::error::Result<(Option<String>, usize)> {
 
 /// Resolve a field path on a manifest. The first segment may name a top-level
 /// Manifest field (`file_type`, etc.); otherwise it's looked up in `fields.<name>`.
+///
+/// Field-name matching is case-insensitive — `BYTE_SIZE`, `byte_size`, and
+/// `Byte_Size` all resolve to the same field. Same for top-level manifest
+/// fields and nested object keys.
 pub fn resolve_path<'m>(manifest: &'m Manifest, path: &[String]) -> Option<ResolvedValue<'m>> {
     if path.is_empty() {
         return None;
     }
-    let head = &path[0];
+    let head = path[0].to_ascii_lowercase();
     let rest = &path[1..];
 
     let top = match head.as_str() {
@@ -538,6 +542,21 @@ pub fn resolve_path<'m>(manifest: &'m Manifest, path: &[String]) -> Option<Resol
     descend_fields(&manifest.fields, path)
 }
 
+/// Case-insensitive map lookup. Scans for a key whose lowercase form matches
+/// `needle` (which must already be lowercase). Returns the first match in
+/// the map's natural (BTreeMap) order so behavior is deterministic.
+fn get_ci<'m, V>(map: &'m BTreeMap<String, V>, needle: &str) -> Option<&'m V> {
+    if let Some(v) = map.get(needle) {
+        return Some(v);
+    }
+    for (k, v) in map.iter() {
+        if k.eq_ignore_ascii_case(needle) {
+            return Some(v);
+        }
+    }
+    None
+}
+
 fn descend_fields<'m>(
     fields: &'m BTreeMap<String, FieldValue>,
     path: &[String],
@@ -545,11 +564,13 @@ fn descend_fields<'m>(
     if path.is_empty() {
         return None;
     }
-    let mut cur: &'m FieldValue = fields.get(&path[0])?;
+    let head = path[0].to_ascii_lowercase();
+    let mut cur: &'m FieldValue = get_ci(fields, &head)?;
     for seg in &path[1..] {
         match cur {
             FieldValue::Object(o) => {
-                cur = o.get(seg)?;
+                let key = seg.to_ascii_lowercase();
+                cur = get_ci(o, &key)?;
             }
             _ => return None,
         }
@@ -847,5 +868,29 @@ mod tests {
         assert!(evaluate(&parse("author.name = \"Alice\"").unwrap(), &m));
         assert!(evaluate(&parse("fields.author.name = \"Alice\"").unwrap(), &m));
         assert!(!evaluate(&parse("author.name = \"Bob\"").unwrap(), &m));
+    }
+
+    #[test]
+    fn eval_field_paths_are_case_insensitive() {
+        // Top-level manifest field
+        let m = m_with_fields("pdf", vec![("byte_size", FieldValue::Int(45))]);
+        assert!(evaluate(&parse("FILE_TYPE = \"pdf\"").unwrap(), &m));
+        assert!(evaluate(&parse("File_Type = \"pdf\"").unwrap(), &m));
+
+        // Implicit and explicit fields.* lookups
+        assert!(evaluate(&parse("BYTE_SIZE = 45").unwrap(), &m));
+        assert!(evaluate(&parse("Byte_Size = 45").unwrap(), &m));
+        assert!(evaluate(&parse("fields.BYTE_SIZE = 45").unwrap(), &m));
+        assert!(evaluate(&parse("FIELDS.byte_size = 45").unwrap(), &m));
+
+        // Nested object key
+        let mut nested = BTreeMap::new();
+        nested.insert("name".into(), FieldValue::String("Alice".into()));
+        let m2 = m_with_fields("pdf", vec![("author", FieldValue::Object(nested))]);
+        assert!(evaluate(&parse("AUTHOR.NAME = \"Alice\"").unwrap(), &m2));
+        assert!(evaluate(&parse("Author.Name = \"Alice\"").unwrap(), &m2));
+
+        // exists() also case-insensitive
+        assert!(evaluate(&parse("exists(BYTE_SIZE)").unwrap(), &m));
     }
 }

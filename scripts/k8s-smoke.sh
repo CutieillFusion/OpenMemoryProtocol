@@ -115,6 +115,23 @@ curl -fsS http://127.0.0.1:18080/files \
   -H "Authorization: Bearer dev-alice" | head -c 400
 echo
 
+log "GET /ui/ via gateway (embedded SvelteKit UI)"
+ui_body=$(curl -fsS http://127.0.0.1:18080/ui/)
+echo "$ui_body" | head -c 200; echo
+echo "$ui_body" | grep -q "<html" \
+  || { log "ERROR: /ui/ did not return an HTML document"; exit 1; }
+ui_ctype=$(curl -fsSI http://127.0.0.1:18080/ui/ | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type"{print $2}')
+echo "$ui_ctype" | grep -qi "text/html" \
+  || { log "ERROR: /ui/ Content-Type was '$ui_ctype', expected text/html"; exit 1; }
+
+log "GET /ui/file/foo (deep link → SPA fallback)"
+curl -fsS http://127.0.0.1:18080/ui/file/foo | grep -q "<html" \
+  || { log "ERROR: /ui/file/foo did not return SPA fallback HTML"; exit 1; }
+
+log "GET / (should redirect to /ui/)"
+loc=$(curl -fsS -o /dev/null -w '%{redirect_url}' http://127.0.0.1:18080/)
+[[ "$loc" == *"/ui/" ]] || { log "ERROR: / did not redirect to /ui/, got '$loc'"; exit 1; }
+
 log "GET /metrics via shard 0 (port-forwarded)"
 kubectl -n "$NAMESPACE" port-forward "svc/${RELEASE}-omp-shard-0" 18001:8000 \
   >/tmp/omp-pf-shard.log 2>&1 &

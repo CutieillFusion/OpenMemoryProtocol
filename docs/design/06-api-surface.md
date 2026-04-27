@@ -87,7 +87,7 @@ An `axum` app in `crates/omp-server/src/main.rs` mounts these routes. Each route
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/commit` | Commit staged changes. Body: `{message, author?}`. Returns commit hash. |
+| `POST` | `/commit` | Commit staged changes. Body: `{message, author?}`. Returns `{hash, reprobed?}`. The optional `reprobed` array is present when the commit included a `schemas/<X>.schema` change that auto-rebuilt existing manifests of that file_type — see [`21-schema-reprobe.md`](./21-schema-reprobe.md). Each entry has `{file_type, count, skipped: [{path, reason}]}`; per-file failures don't block the commit. |
 | `GET`  | `/log` | Commit history. Supports `?path=<p>&max=<n>`. |
 | `GET`  | `/diff` | Structured diff between two refs. `?from=<a>&to=<b>&path=<p>`. |
 

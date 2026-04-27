@@ -55,6 +55,32 @@ type = "string"
 - **`file_type`** (required, string) — must match the basename of the schema file (i.e., `schemas/pdf.schema` must declare `file_type = "pdf"`).
 - **`mime_patterns`** (required, list of strings) — MIME type patterns for auto-detection. When a user uploads a file without specifying `--type`, OMP inspects the file's MIME type and picks the first schema whose `mime_patterns` matches.
 - **`allow_extra_fields`** (optional, bool, default `false`) — if true, caller-provided fields not declared in the schema are stored verbatim under `[fields]`. If false, unknown fields are rejected.
+- **`[render]`** (optional table) — UI render hint. Describes how the web frontend should display the file's bytes when a manifest of this file_type is opened. Schema-level (not per-manifest) so the choice travels with the file_type and time-travels with the schema. See "[Render hints](#render-hints)" below.
+
+## Render hints
+
+Web clients need to know whether to fetch and render a file's bytes inline (text, image, markdown) or to surface them as a download (binary). The schema is the right place to declare that, since the file_type already drives every other UI choice and the answer doesn't vary per-manifest.
+
+```toml
+[render]
+kind = "markdown"           # text | hex | image | markdown | binary | none
+max_inline_bytes = 65536    # optional cap; default 64 KiB
+```
+
+Recognized kinds:
+
+- **`text`** — UTF-8 decode and render as monospace with line numbers.
+- **`hex`** — render as a hex+ASCII dump.
+- **`image`** — fetch as a blob and render via `<img>`. Auth-aware (the UI uses a `blob:` URL so the bearer token is attached to the byte fetch).
+- **`markdown`** — UTF-8 decode, render with a sanitized markdown pipeline.
+- **`binary`** — no inline preview; show a download button. Default for unknown file types.
+- **`none`** — no preview at all (use for opaque/encrypted blobs where displaying anything is misleading).
+
+When `[render]` is omitted, OMP infers a reasonable kind from `mime_patterns[0]`: `image/*` → `image`, `text/markdown` → `markdown`, other `text/*` and `application/json|toml|yaml|xml` → `text`, everything else → `binary`. Files with no schema (the `_minimal` schema, or the `allow_blob_fallback` path) resolve to `binary`.
+
+The render hint is surfaced on `GET /files/{path}` responses as a top-level `render` field. Time-travel works as expected — `?at=<old_commit>` returns the render hint from the schema as it existed at that commit, not from HEAD.
+
+Forward compatibility: an unknown `kind` value (one written by a newer OMP than the reader knows about) resolves to `binary` rather than failing the schema parse, so older clients keep working.
 
 ## Field declarations
 
@@ -200,8 +226,7 @@ The intended workflow for an LLM modifying a schema:
 2. Produce a modified version.
 3. **Dry-run**: `POST /test/ingest` with the proposed new schema and a sample file. OMP validates the schema, runs the engine, and returns the manifest that *would* be produced — without staging anything.
 4. If the result looks right, `POST /files path=schemas/pdf.schema file=@new.schema` to stage the schema change.
-5. (Optional) `PATCH /files/<user-file>/fields` to rebuild manifests under the new schema for existing files.
-6. `POST /commit` to commit the schema change and rebuilt manifests in one atomic commit.
+5. `POST /commit` — the schema change AND rebuilt manifests for every existing file of that file_type land in **one atomic commit**. See [`21-schema-reprobe.md`](./21-schema-reprobe.md) for the auto-reprobe semantics: field-level reuse copies unchanged fields verbatim from the old manifest, only fields whose `Source` actually changed get re-derived. The commit response includes a `reprobed` summary listing per-file_type counts and any per-file failures (one bad file does not block the commit).
 
 The dry-run step is the safety valve. It means an LLM can iterate on schema designs freely without ever leaving the repo in a broken state.
 

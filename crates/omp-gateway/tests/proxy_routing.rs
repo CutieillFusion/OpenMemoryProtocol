@@ -53,6 +53,7 @@ async fn routes_alice_and_bob_to_different_shards() {
         shards: vec![shard_a.clone(), shard_b.clone()],
         tokens,
         allow_dev_tokens: false,
+        builder: None,
     };
     let signer = GatewaySigner::generate();
     let verifying = signer.verifying_key();
@@ -207,6 +208,7 @@ async fn routes_alice_and_bob_to_different_shards() {
         shards: vec![cap_url.clone()],
         tokens,
         allow_dev_tokens: false,
+        builder: None,
     };
     let signer2 = GatewaySigner::generate();
     let vk2 = signer2.verifying_key();
@@ -240,6 +242,7 @@ async fn rejects_unauthorized_requests() {
         shards: vec![shard],
         tokens: HashMap::new(),
         allow_dev_tokens: false,
+        builder: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let app = gateway_router(state);
@@ -278,6 +281,7 @@ async fn dev_tokens_resolve_when_enabled() {
         shards: vec![shard],
         tokens: HashMap::new(),
         allow_dev_tokens: true,
+        builder: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let app = gateway_router(state);
@@ -301,6 +305,299 @@ async fn dev_tokens_resolve_when_enabled() {
 }
 
 #[tokio::test]
+async fn forwards_sse_responses_as_a_stream() {
+    use futures::StreamExt;
+
+    // Fake upstream that emits an SSE response with two events separated by a
+    // delay. If the gateway buffers the body (the previous behavior) the
+    // client sees nothing until the upstream closes; with streaming, the first
+    // chunk arrives well before the second.
+    let app = Router::new().route(
+        "/watch",
+        get(|| async {
+            let stream = async_stream::stream! {
+                yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(
+                    "event: ping\ndata: 1\n\n",
+                ));
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                yield Ok(axum::body::Bytes::from("event: ping\ndata: 2\n\n"));
+            };
+            (
+                [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                axum::body::Body::from_stream(stream),
+            )
+        }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_addr = listener.local_addr().unwrap();
+    let upstream_url = format!("http://{upstream_addr}");
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut tokens = HashMap::new();
+    tokens.insert(hash_token("eve-token"), "eve".to_string());
+    let cfg = GatewayConfig {
+        shards: vec![upstream_url],
+        tokens,
+        allow_dev_tokens: false,
+        builder: None,
+    };
+    let state = GatewayState::new(cfg, GatewaySigner::generate());
+    let listener2 = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gw_addr = listener2.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener2, gateway_router(state)).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let client = reqwest::Client::new();
+
+    let started = std::time::Instant::now();
+    let resp = client
+        .get(format!("http://{gw_addr}/watch"))
+        .header("Authorization", "Bearer eve-token")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let ctype = resp
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        ctype.starts_with("text/event-stream"),
+        "expected SSE content-type, got: {ctype}"
+    );
+    let xab = resp
+        .headers()
+        .get("x-accel-buffering")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(xab, "no", "x-accel-buffering must be set to 'no' for SSE");
+    let cc = resp
+        .headers()
+        .get(axum::http::header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(cc, "no-cache", "cache-control must be 'no-cache' for SSE");
+
+    // The first chunk should arrive almost immediately. The buffered path
+    // would block here for the full 300ms upstream delay.
+    let mut stream = resp.bytes_stream();
+    let first = stream.next().await.expect("first chunk").unwrap();
+    let first_elapsed = started.elapsed();
+    assert!(
+        first_elapsed < Duration::from_millis(200),
+        "first SSE chunk arrived after {first_elapsed:?}; gateway is buffering"
+    );
+    let first_str = std::str::from_utf8(&first).unwrap();
+    assert!(first_str.contains("data: 1"), "first chunk content: {first_str}");
+
+    // Drain the rest and confirm the second event arrives too.
+    let mut tail = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        tail.extend_from_slice(&chunk.unwrap());
+    }
+    let tail_str = std::str::from_utf8(&tail).unwrap();
+    assert!(tail_str.contains("data: 2"), "tail content: {tail_str}");
+}
+
+#[cfg(feature = "embed-ui")]
+#[tokio::test]
+async fn serves_embedded_ui_at_slash_ui() {
+    // Stand up a gateway with no real shards — UI routes should resolve
+    // entirely from embedded assets without ever touching the proxy.
+    let cfg = GatewayConfig {
+        shards: vec!["http://127.0.0.1:1".to_string()],
+        tokens: HashMap::new(),
+        allow_dev_tokens: false,
+        builder: None,
+    };
+    let state = GatewayState::new(cfg, GatewaySigner::generate());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gw_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, gateway_router(state)).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // GET / → 307 to /ui/.
+    let resp = client.get(format!("http://{gw_addr}/")).send().await.unwrap();
+    assert_eq!(resp.status(), 307);
+    let loc = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(loc, "/ui/");
+
+    // GET /ui/ → 200 HTML.
+    let resp = client
+        .get(format!("http://{gw_addr}/ui/"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let ctype = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ctype.starts_with("text/html"), "content-type: {ctype}");
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<html"), "body should be HTML");
+
+    // Deep link to a dynamic route: GET /ui/file/some/path → 200 (SPA fallback).
+    let resp = client
+        .get(format!("http://{gw_addr}/ui/file/foo/bar"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let ctype = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ctype.starts_with("text/html"), "deep-link content-type: {ctype}");
+
+    // Missing asset with extension → 404.
+    let resp = client
+        .get(format!("http://{gw_addr}/ui/_app/nope.js"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn routes_probes_build_to_builder() {
+    // Stand up a fake builder + a fake shard. The gateway should route
+    // `/probes/build*` to the builder and other paths to the shard. See
+    // `docs/design/20-server-side-probes.md` §Architecture.
+    let captured_builder: Arc<tokio::sync::Mutex<Option<String>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+    let captured_for_handler = captured_builder.clone();
+    let builder_app = Router::new().route(
+        "/probes/build",
+        axum::routing::post(move |req: axum::extract::Request| {
+            let captured = captured_for_handler.clone();
+            async move {
+                *captured.lock().await = Some(req.uri().path().to_string());
+                (axum::http::StatusCode::ACCEPTED, "{\"job_id\":\"abc\"}")
+            }
+        }),
+    );
+    let bl = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let builder_url = format!("http://{}", bl.local_addr().unwrap());
+    tokio::spawn(async move {
+        let _ = axum::serve(bl, builder_app).await;
+    });
+
+    let captured_shard: Arc<tokio::sync::Mutex<Option<String>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+    let captured_for_shard = captured_shard.clone();
+    let shard_app = Router::new().route(
+        "/files",
+        axum::routing::get(move |req: axum::extract::Request| {
+            let captured = captured_for_shard.clone();
+            async move {
+                *captured.lock().await = Some(req.uri().path().to_string());
+                (axum::http::StatusCode::OK, "[]")
+            }
+        }),
+    );
+    let sl = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let shard_url = format!("http://{}", sl.local_addr().unwrap());
+    tokio::spawn(async move {
+        let _ = axum::serve(sl, shard_app).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut tokens = HashMap::new();
+    tokens.insert(hash_token("frank-token"), "frank".to_string());
+    let cfg = GatewayConfig {
+        shards: vec![shard_url],
+        tokens,
+        allow_dev_tokens: false,
+        builder: Some(builder_url),
+    };
+    let state = GatewayState::new(cfg, GatewaySigner::generate());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gw_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, gateway_router(state)).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let client = reqwest::Client::new();
+
+    // POST /probes/build → builder.
+    let resp = client
+        .post(format!("http://{gw_addr}/probes/build"))
+        .header("Authorization", "Bearer frank-token")
+        .json(&serde_json::json!({"namespace":"x","name":"y"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let path = captured_builder
+        .lock()
+        .await
+        .clone()
+        .expect("builder must have received the request");
+    assert_eq!(path, "/probes/build");
+
+    // GET /files → shard.
+    let resp = client
+        .get(format!("http://{gw_addr}/files"))
+        .header("Authorization", "Bearer frank-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let path = captured_shard
+        .lock()
+        .await
+        .clone()
+        .expect("shard must have received the /files request");
+    assert_eq!(path, "/files");
+}
+
+#[tokio::test]
+async fn probes_build_returns_503_when_no_builder_configured() {
+    let mut tokens = HashMap::new();
+    tokens.insert(hash_token("grace-token"), "grace".to_string());
+    let cfg = GatewayConfig {
+        shards: vec!["http://127.0.0.1:1".to_string()],
+        tokens,
+        allow_dev_tokens: false,
+        builder: None,
+    };
+    let state = GatewayState::new(cfg, GatewaySigner::generate());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gw_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, gateway_router(state)).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("http://{gw_addr}/probes/build"))
+        .header("Authorization", "Bearer grace-token")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "builder_unavailable");
+}
+
+#[tokio::test]
 async fn translates_412_to_409() {
     // Stand up a fake upstream that always returns 412.
     let app = Router::new().route("/anything", get(|| async { (axum::http::StatusCode::PRECONDITION_FAILED, "no") }));
@@ -318,6 +615,7 @@ async fn translates_412_to_409() {
         shards: vec![upstream_url],
         tokens,
         allow_dev_tokens: false,
+        builder: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let listener2 = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -275,17 +275,24 @@ async fn get_file(
         Err(e) => return e,
     };
     match tr.repo.show(&path, q.at.as_deref()) {
-        Ok(ShowResult::Manifest { manifest, .. }) => {
-            if q.verbose {
-                ok_json(manifest)
-            } else {
-                ok_compact(manifest, compact_manifest)
+        Ok(ShowResult::Manifest { manifest, render, .. }) => {
+            // Inline `render` as a sibling of the manifest's serialized
+            // fields so the response stays a single flat object — the UI
+            // currently treats the body as a Manifest and just sees one
+            // extra top-level key.
+            let mut value = serde_json::to_value(manifest).unwrap_or(serde_json::Value::Null);
+            if !q.verbose {
+                compact_manifest(&mut value);
             }
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("render".to_string(), serde_json::to_value(render).unwrap_or(serde_json::Value::Null));
+            }
+            (StatusCode::OK, Json(value)).into_response()
         }
-        Ok(ShowResult::Blob { blob_hash, size, .. }) => {
+        Ok(ShowResult::Blob { blob_hash, size, render, .. }) => {
             // Blob responses are hash-centric by design (the caller asked for
             // a blob-addressable object) — always include.
-            ok_json(json!({ "kind": "blob", "hash": blob_hash, "size": size }))
+            ok_json(json!({ "kind": "blob", "hash": blob_hash, "size": size, "render": render }))
         }
         Ok(ShowResult::Tree { entries, .. }) => {
             if q.verbose {
@@ -425,8 +432,8 @@ async fn commit_route(
         timestamp: a.timestamp,
     });
     let tenant_id = tr.repo.tenant().as_str().to_string();
-    match tr.repo.commit(&body.message, override_) {
-        Ok(h) => {
+    match tr.repo.commit_with_summary(&body.message, override_) {
+        Ok((h, reprobed)) => {
             // Publish commit.created on the event bus. Per doc 16, this fires
             // *after* the commit is durable in the store. Best-effort: a
             // failed publish logs WARN but does not surface to the client.
@@ -453,7 +460,14 @@ async fn commit_route(
                     }
                 });
             }
-            ok_json(json!({ "hash": h }))
+            // Reprobe summary, when present (see doc 21). Empty array
+            // when the commit didn't touch any schemas — clients should
+            // treat absence as "nothing to report".
+            let mut body = json!({ "hash": h });
+            if !reprobed.is_empty() {
+                body["reprobed"] = serde_json::to_value(&reprobed).unwrap_or(json!(null));
+            }
+            ok_json(body)
         }
         Err(e) => to_response(e),
     }

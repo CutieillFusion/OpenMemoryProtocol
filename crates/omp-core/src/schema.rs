@@ -5,10 +5,33 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{OmpError, Result};
 use crate::manifest::FieldValue;
+
+/// How the UI should render a file's bytes. The schema names the kind; the
+/// engine surfaces it on `ShowResult::Manifest` so the frontend can pick a
+/// renderer without sniffing MIME itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RenderKind {
+    Text,
+    Hex,
+    Image,
+    Markdown,
+    Binary,
+    None,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderHint {
+    pub kind: RenderKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_inline_bytes: Option<u64>,
+}
+
+pub const DEFAULT_MAX_INLINE_BYTES: u64 = 65_536;
 
 /// The closed set of value types the schema type system supports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,7 +116,7 @@ impl FieldType {
 }
 
 /// A single source within a field declaration. The closed set of four sources.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Source {
     Constant { value: FieldValue },
     Probe { probe: String, args: BTreeMap<String, FieldValue> },
@@ -155,7 +178,7 @@ fn slugify(s: &str) -> String {
     out
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Field {
     pub name: String,
     pub source: Source,
@@ -171,6 +194,7 @@ pub struct Schema {
     pub mime_patterns: Vec<String>,
     pub allow_extra_fields: bool,
     pub fields: Vec<Field>, // topologically sorted
+    pub render: Option<RenderHint>,
 }
 
 impl Schema {
@@ -208,12 +232,36 @@ impl Schema {
             check_field_refs(f, &converted)?;
         }
 
+        let render = raw.render.map(|rr| RenderHint {
+            kind: parse_render_kind(&rr.kind),
+            max_inline_bytes: rr.max_inline_bytes,
+        });
+
         Ok(Schema {
             file_type: raw.file_type,
             mime_patterns: raw.mime_patterns,
             allow_extra_fields: raw.allow_extra_fields.unwrap_or(false),
             fields: ordered,
+            render,
         })
+    }
+
+    /// Resolve the render hint to apply for this schema. Returns the explicit
+    /// `[render]` block when set; otherwise infers from `mime_patterns[0]` so
+    /// existing schemas keep working without an opt-in.
+    pub fn effective_render(&self) -> RenderHint {
+        if let Some(r) = &self.render {
+            return r.clone();
+        }
+        let kind = self
+            .mime_patterns
+            .first()
+            .map(|m| heuristic_render_kind(m))
+            .unwrap_or(RenderKind::Binary);
+        RenderHint {
+            kind,
+            max_inline_bytes: None,
+        }
     }
 
     /// Validate that every `probe` reference names a probe whose `.wasm` +
@@ -224,6 +272,43 @@ impl Schema {
         }
         Ok(())
     }
+}
+
+/// Parse a TOML `kind = "..."` value. Unknown kinds resolve to `Binary` so a
+/// future schema written with a newer kind doesn't break older readers.
+fn parse_render_kind(s: &str) -> RenderKind {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "text" => RenderKind::Text,
+        "hex" => RenderKind::Hex,
+        "image" => RenderKind::Image,
+        "markdown" => RenderKind::Markdown,
+        "binary" => RenderKind::Binary,
+        "none" => RenderKind::None,
+        _ => RenderKind::Binary,
+    }
+}
+
+/// Cheap MIME → kind mapping for schemas that don't declare `[render]`.
+fn heuristic_render_kind(mime_pattern: &str) -> RenderKind {
+    let lower = mime_pattern.to_ascii_lowercase();
+    if lower.starts_with("text/markdown") || lower == "text/x-markdown" {
+        return RenderKind::Markdown;
+    }
+    if lower.starts_with("image/") {
+        return RenderKind::Image;
+    }
+    if lower.starts_with("text/") {
+        return RenderKind::Text;
+    }
+    if lower.starts_with("application/json")
+        || lower.starts_with("application/toml")
+        || lower.starts_with("application/yaml")
+        || lower.starts_with("application/x-yaml")
+        || lower.contains("xml")
+    {
+        return RenderKind::Text;
+    }
+    RenderKind::Binary
 }
 
 fn validate_probe_refs_inner(
@@ -271,6 +356,16 @@ struct RawSchema {
     allow_extra_fields: Option<bool>,
     #[serde(default)]
     fields: HashMap<String, RawField>,
+    #[serde(default)]
+    render: Option<RawRender>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRender {
+    kind: String,
+    #[serde(default)]
+    max_inline_bytes: Option<u64>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -641,6 +736,79 @@ mime_patterns = []
         assert!(mime_matches("text/*", "text/markdown"));
         assert!(mime_matches("*/*", "image/png"));
         assert!(!mime_matches("application/pdf", "text/plain"));
+    }
+
+    #[test]
+    fn parses_render_block() {
+        let input = br#"file_type = "pdf"
+mime_patterns = ["application/pdf"]
+
+[render]
+kind = "binary"
+max_inline_bytes = 1024
+"#;
+        let s = Schema::parse(input, "pdf").unwrap();
+        let r = s.render.as_ref().unwrap();
+        assert_eq!(r.kind, RenderKind::Binary);
+        assert_eq!(r.max_inline_bytes, Some(1024));
+    }
+
+    #[test]
+    fn effective_render_uses_explicit_block_when_set() {
+        let input = br#"file_type = "md"
+mime_patterns = ["application/octet-stream"]
+
+[render]
+kind = "markdown"
+"#;
+        let s = Schema::parse(input, "md").unwrap();
+        let r = s.effective_render();
+        assert_eq!(r.kind, RenderKind::Markdown);
+        assert!(r.max_inline_bytes.is_none());
+    }
+
+    #[test]
+    fn effective_render_falls_back_to_mime_heuristic() {
+        let png = Schema::parse(
+            br#"file_type = "png"
+mime_patterns = ["image/png"]
+"#,
+            "png",
+        )
+        .unwrap();
+        assert_eq!(png.effective_render().kind, RenderKind::Image);
+
+        let md = Schema::parse(
+            br#"file_type = "md"
+mime_patterns = ["text/markdown"]
+"#,
+            "md",
+        )
+        .unwrap();
+        assert_eq!(md.effective_render().kind, RenderKind::Markdown);
+
+        let opaque = Schema::parse(
+            br#"file_type = "blob"
+mime_patterns = ["application/octet-stream"]
+"#,
+            "blob",
+        )
+        .unwrap();
+        assert_eq!(opaque.effective_render().kind, RenderKind::Binary);
+    }
+
+    #[test]
+    fn unknown_render_kind_resolves_to_binary() {
+        // Forward-compat: a future kind a v1 reader doesn't recognize should
+        // still parse, just resolve to Binary.
+        let input = br#"file_type = "x"
+mime_patterns = ["application/x-x"]
+
+[render]
+kind = "future-format"
+"#;
+        let s = Schema::parse(input, "x").unwrap();
+        assert_eq!(s.effective_render().kind, RenderKind::Binary);
     }
 
     #[test]

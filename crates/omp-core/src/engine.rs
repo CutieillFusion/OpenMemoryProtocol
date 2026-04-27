@@ -5,6 +5,7 @@
 //! manifest. Writes nothing — the caller (`omp_core::api`) is responsible for
 //! staging the manifest + blob.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 
 use crate::config::ProbeLimits;
@@ -105,7 +106,10 @@ pub struct TreeView<'a> {
 
 #[derive(Clone)]
 pub struct ProbeBlob<'a> {
-    pub wasm: &'a [u8],
+    /// Probe wasm bytes. `Cow::Borrowed` for the embedded starter pack
+    /// (zero-copy from `include_bytes!`) and `Cow::Owned` for probes loaded
+    /// dynamically from the tree at ingest. See `docs/design/20-server-side-probes.md`.
+    pub wasm: Cow<'a, [u8]>,
     /// Framed-object hash (`hash_of(Blob, wasm_bytes)`).
     pub framed_hash: Hash,
     /// From `[limits].max_input_bytes` in the probe's `.probe.toml`. `None`
@@ -119,16 +123,36 @@ pub fn schema_hash(schema_bytes: &[u8]) -> Hash {
     hash_of(ObjectType::Blob, schema_bytes)
 }
 
+/// Cache of `(source_hash, probe_framed_hash, canonical_args)` →
+/// `FieldValue`. Used during a reprobe pass to skip redundant probe runs
+/// across files with identical source bytes. Single-file ingests trivially
+/// pass an empty cache and fill it as they go (no benefit, no harm).
+///
+/// See `docs/design/21-schema-reprobe.md`.
+pub type ProbeOutputCache = HashMap<(Hash, Hash, String), FieldValue>;
+
 /// Resolve every field in `schema.fields` and return a ready-to-store manifest.
 ///
 /// The caller is responsible for (a) writing the blob and capturing its hash
 /// (via `hash_of(ObjectType::Blob, bytes)`), then (b) writing the manifest.
 pub fn ingest(input: &IngestInput<'_>, view: &TreeView<'_>) -> Result<Manifest> {
+    let mut cache = ProbeOutputCache::new();
+    ingest_with_cache(input, view, &mut cache)
+}
+
+/// Same as `ingest` but lets the caller share a probe-output cache across
+/// many calls. Reprobe passes use this so that two files with byte-identical
+/// source share probe results.
+pub fn ingest_with_cache(
+    input: &IngestInput<'_>,
+    view: &TreeView<'_>,
+    cache: &mut ProbeOutputCache,
+) -> Result<Manifest> {
     let mut resolved: BTreeMap<String, FieldValue> = BTreeMap::new();
     let mut probe_hashes: BTreeMap<String, Hash> = BTreeMap::new();
 
     for field in &view.schema.fields {
-        let value = resolve_field(field, input, view, &resolved, &mut probe_hashes)?;
+        let value = resolve_field(field, input, view, &resolved, &mut probe_hashes, cache)?;
         if field.required && value.is_null() {
             return Err(OmpError::IngestValidation(format!(
                 "required field {:?} resolved to null",
@@ -185,13 +209,15 @@ fn resolve_field(
     view: &TreeView<'_>,
     resolved: &BTreeMap<String, FieldValue>,
     probe_hashes: &mut BTreeMap<String, Hash>,
+    cache: &mut ProbeOutputCache,
 ) -> Result<FieldValue> {
-    let primary = resolve_source(&field.source, field, input, view, resolved, probe_hashes)?;
+    let primary =
+        resolve_source(&field.source, field, input, view, resolved, probe_hashes, cache)?;
     if !primary.is_null() {
         return Ok(primary);
     }
     if let Some(fb) = &field.fallback {
-        let fb_val = resolve_field(fb, input, view, resolved, probe_hashes)?;
+        let fb_val = resolve_field(fb, input, view, resolved, probe_hashes, cache)?;
         return Ok(fb_val);
     }
     Ok(primary)
@@ -204,6 +230,7 @@ fn resolve_source(
     view: &TreeView<'_>,
     resolved: &BTreeMap<String, FieldValue>,
     probe_hashes: &mut BTreeMap<String, Hash>,
+    cache: &mut ProbeOutputCache,
 ) -> Result<FieldValue> {
     match source {
         Source::Constant { value } => Ok(value.clone()),
@@ -257,13 +284,29 @@ fn resolve_source(
             if !effective.contains_key("path") {
                 effective.insert("path".to_string(), FieldValue::String(input.path.to_string()));
             }
+
+            // Cache lookup. Key is (source_hash, probe_framed_hash,
+            // canonical_args). The source hash comes from the ingest
+            // input (set explicitly by reprobe via `override_source_hash`,
+            // computed on the fly for fresh ingest).
+            let source_hash = input
+                .override_source_hash
+                .unwrap_or_else(|| hash_of(ObjectType::Blob, input.bytes));
+            let args_canonical = canonical_args_key(&effective);
+            let cache_key = (source_hash, blob.framed_hash, args_canonical);
+            if let Some(cached) = cache.get(&cache_key) {
+                probe_hashes.insert(probe.clone(), blob.framed_hash);
+                return Ok(cached.clone());
+            }
+
             let cfg = ProbeConfig {
                 fuel: view.limits.fuel,
                 memory_mb: view.limits.memory_mb,
                 wall_clock_s: view.limits.wall_clock_s,
             };
-            let out = probes::run_probe(probe, blob.wasm, input.bytes, &effective, &cfg)?;
+            let out = probes::run_probe(probe, &blob.wasm, input.bytes, &effective, &cfg)?;
             probe_hashes.insert(probe.clone(), blob.framed_hash);
+            cache.insert(cache_key, out.value.clone());
             Ok(out.value)
         }
 
@@ -287,6 +330,16 @@ fn resolve_source(
 /// is inside this file.
 #[allow(dead_code)]
 const _: Transform = Transform::Identity;
+
+/// Stable canonical form of a probe's `args` map for use as a cache key.
+///
+/// `BTreeMap` already iterates in sorted-key order, and `serde_json` for
+/// untagged `FieldValue` produces deterministic output, so the resulting
+/// string is identical for any two semantically-equal arg maps. Used by
+/// `ProbeOutputCache`; not part of any wire format.
+fn canonical_args_key(args: &BTreeMap<String, FieldValue>) -> String {
+    serde_json::to_string(args).unwrap_or_else(|_| String::new())
+}
 
 /// Normalize probe outputs before storage. Primarily: if a probe returned an
 /// `Int` but the field is declared `Float`, promote it.
@@ -339,7 +392,7 @@ mod tests {
             out.insert(
                 p.name.to_string(),
                 ProbeBlob {
-                    wasm: p.wasm,
+                    wasm: Cow::Borrowed(p.wasm),
                     framed_hash: hash_of(ObjectType::Blob, p.wasm),
                     max_input_bytes: manifest.max_input_bytes,
                 },

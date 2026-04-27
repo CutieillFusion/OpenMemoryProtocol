@@ -13,6 +13,14 @@ path = "src/lib.rs"
 name = "omp-gateway"
 path = "src/main.rs"
 
+[features]
+default = ["embed-ui"]
+# Compile the SvelteKit `frontend/build/` directory into the gateway binary
+# and serve it at `/ui/*`. Disable with `--no-default-features` for
+# backend-only builds that don't have Node available. See
+# `docs/design/19-web-frontend.md`.
+embed-ui = ["dep:rust-embed", "dep:mime_guess"]
+
 [dependencies]
 omp-tenant-ctx = { workspace = true }
 omp-core = { path = "../omp-core" }
@@ -31,8 +39,12 @@ tracing-subscriber = { workspace = true }
 ed25519-dalek = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }
+rust-embed = { workspace = true, optional = true }
+mime_guess = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 omp-server = { path = "../omp-server" }
 omp-core = { path = "../omp-core" }
+futures = { workspace = true }
+async-stream = { workspace = true }

@@ -28,6 +28,9 @@ use omp_tenant_ctx::GatewaySigner;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "embed-ui")]
+mod ui;
+
 static TENANT_CTX_HEADER_NAME: HeaderName = HeaderName::from_static(omp_tenant_ctx::HEADER_NAME);
 
 const HOP_BY_HOP_HEADERS: &[&str] = &["connection", "transfer-encoding", "content-length"];
@@ -44,6 +47,11 @@ pub struct GatewayConfig {
     /// Convenient for local development; never enable in production.
     #[serde(default)]
     pub allow_dev_tokens: bool,
+    /// Optional `omp-builder` URL. When set, requests under `/probes/build*`
+    /// route there instead of to a shard. When unset, those routes return
+    /// `503 builder_unavailable`. See `docs/design/20-server-side-probes.md`.
+    #[serde(default)]
+    pub builder: Option<String>,
 }
 
 impl GatewayConfig {
@@ -104,11 +112,16 @@ impl GatewayState {
 }
 
 pub fn router(state: GatewayState) -> Router {
-    Router::new()
-        .route("/healthz", any(healthz))
-        // Catch-all: any other path proxies to the backend.
-        .fallback(any(proxy))
-        .with_state(state)
+    let r = Router::new().route("/healthz", any(healthz));
+
+    // Mount the embedded SvelteKit UI at `/`, `/ui`, and `/ui/*`. These
+    // routes win over the proxy fallback because they're explicit. API
+    // endpoints (everything under root that isn't `/healthz`, `/`, or
+    // `/ui*`) flow through `proxy` exactly as before.
+    #[cfg(feature = "embed-ui")]
+    let r = r.merge(ui::router::<GatewayState>());
+
+    r.fallback(any(proxy)).with_state(state)
 }
 
 async fn healthz() -> Response {
@@ -131,11 +144,31 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
         }
     };
 
-    // 2. Pick a shard.
-    let shard = match state.shard_for(&tenant) {
-        Some(s) => s.to_string(),
-        None => {
-            return error_response(StatusCode::SERVICE_UNAVAILABLE, "no_shards", "no backend shards configured");
+    // 2. Pick the upstream by path prefix. `/probes/build*` lands on the
+    //    `omp-builder` service (per doc 20); everything else flows to the
+    //    tenant's shard exactly as before.
+    let path_for_routing = req.uri().path();
+    let upstream_base = if path_for_routing.starts_with("/probes/build") {
+        match state.config.builder.as_deref() {
+            Some(url) => url.to_string(),
+            None => {
+                return error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "builder_unavailable",
+                    "no omp-builder configured for this gateway",
+                );
+            }
+        }
+    } else {
+        match state.shard_for(&tenant) {
+            Some(s) => s.to_string(),
+            None => {
+                return error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "no_shards",
+                    "no backend shards configured",
+                );
+            }
         }
     };
 
@@ -159,7 +192,7 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or("/");
-    let upstream_url = format!("{}{}", shard.trim_end_matches('/'), path_and_query);
+    let upstream_url = format!("{}{}", upstream_base.trim_end_matches('/'), path_and_query);
 
     // 5. Forward.
     let method = req.method().clone();
@@ -198,16 +231,15 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
 
     let status = upstream_resp.status();
     let resp_headers = upstream_resp.headers().clone();
-    let resp_bytes = match upstream_resp.bytes().await {
-        Ok(b) => b,
-        Err(e) => {
-            return error_response(
-                StatusCode::BAD_GATEWAY,
-                "upstream_body",
-                &e.to_string(),
-            );
-        }
-    };
+
+    // SSE responses (`/watch`, per docs/design/16-event-streaming.md) must be
+    // forwarded as a stream, not buffered — buffering would hold every event
+    // until the upstream closes, which is forever.
+    let is_sse = resp_headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim_start().starts_with("text/event-stream"))
+        .unwrap_or(false);
 
     // Translate internal 412 → external 409 conflict (per doc 14 §Idempotency
     // and ref CAS). Backend uses 412 for If-Match precondition failure;
@@ -227,8 +259,35 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
                 map.insert(k.clone(), value);
             }
         }
+        if is_sse {
+            map.insert(
+                HeaderName::from_static("x-accel-buffering"),
+                HeaderValue::from_static("no"),
+            );
+            map.insert(
+                axum::http::header::CACHE_CONTROL,
+                HeaderValue::from_static("no-cache"),
+            );
+        }
     }
-    out.body(Body::from(resp_bytes)).unwrap_or_else(|_| {
+
+    let body = if is_sse {
+        Body::from_stream(upstream_resp.bytes_stream())
+    } else {
+        let resp_bytes = match upstream_resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                return error_response(
+                    StatusCode::BAD_GATEWAY,
+                    "upstream_body",
+                    &e.to_string(),
+                );
+            }
+        };
+        Body::from(resp_bytes)
+    };
+
+    out.body(body).unwrap_or_else(|_| {
         error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "build_response",

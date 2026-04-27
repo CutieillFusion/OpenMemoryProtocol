@@ -25,6 +25,9 @@ Start with the overview, then read the technical docs in order — each builds o
 17. [**16-event-streaming.md**](./16-event-streaming.md) — Six event types over a Kafka/Redpanda broker; topic-per-type, tenant-partitioned; at-least-once delivery; broker as notification, not source of truth.
 18. [**17-deployment-k8s.md**](./17-deployment-k8s.md) — Per-service Deployment/StatefulSet shapes, Helm chart structure, scaling story for refs, network policies, dev vs. prod values files.
 19. [**18-observability.md**](./18-observability.md) — Three operator planes (logs, metrics, traces) plus a tenant-facing audit log stored as objects in the tree.
+20. [**19-web-frontend.md**](./19-web-frontend.md) — Web UI as a SvelteKit static bundle embedded in the gateway via `rust-embed`; full API parity; minimalist aesthetic lifted from `~/personal-website`; no CORS, no second origin.
+21. [**20-server-side-probes.md**](./20-server-side-probes.md) — Tenants POST Rust probe source through the UI; new `omp-builder` microservice compiles in a sandboxed environment with a vendored dep whitelist; output `.wasm` plus source land in the tree as a normal commit. Also wires the engine to actually load probes from the tree at ingest (a prerequisite gap closed in the same change).
+22. [**21-schema-reprobe.md**](./21-schema-reprobe.md) — A schema commit auto-rebuilds every existing manifest of that file_type in the same atomic commit, so newly-added fields populate retroactively. Field-level reuse + per-pass probe-output cache keep the cost proportional to *what changed*, not to total schema size; per-file failures isolate from the commit.
 
 ## How to give feedback
 
@@ -61,3 +64,6 @@ If a design decision spans multiple docs and you want to revisit it, flag it at 
 | 16-event-streaming | Six event types on Kafka/Redpanda; tenant-partitioned topics; broker is notification optimization, not source of truth. |
 | 17-deployment-k8s | Helm chart with per-service Deployments/StatefulSets, mTLS via cert-manager, network policies, observability sub-charts, dev/prod values. |
 | 18-observability | Logs/metrics/traces for operators plus a tenant-facing audit log stored as objects; cardinality-aware metric labels; OTel tracing through probe spans. |
+| 19-web-frontend | SvelteKit static UI embedded in the gateway via `rust-embed`; serves `/ui/*`; bearer-token auth with `--no-auth` probe fallback; same minimalist aesthetic as `~/personal-website`. |
+| 20-server-side-probes | New `omp-builder` microservice compiles tenant-supplied Rust source to WASM in a sandboxed, offline-cargo environment; engine extended to load probes from the tree at ingest; per-tenant isolation, in-memory job state, SSE build logs. |
+| 21-schema-reprobe | Schema commits atomically rebuild every existing manifest of that file_type in the same commit; field-level reuse skips probes whose Source didn't change; per-pass cache dedups identical (source, probe, args) tuples; per-file failures don't block the commit. |

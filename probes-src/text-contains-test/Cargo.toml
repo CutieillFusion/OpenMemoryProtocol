@@ -1,0 +1,13 @@
+[package]
+name = "text-contains-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "text_contains_test"
+crate-type = ["cdylib"]
+
+[dependencies]
+probe-common = { path = "../probe-common" }
+ciborium = { workspace = true }

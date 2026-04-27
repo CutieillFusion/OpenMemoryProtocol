@@ -2,6 +2,7 @@
 //!
 //! See `docs/design/06-api-surface.md` for the contract.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::commit::{Author, Commit};
 use crate::config::{LocalConfig, RepoConfig};
-use crate::engine::{self, IngestInput, ProbeBlob, TreeView};
+use crate::engine::{self, IngestInput, ProbeBlob, ProbeOutputCache, TreeView};
 use crate::error::{OmpError, Result};
 use crate::hash::Hash;
 use crate::manifest::{FieldValue, Manifest};
@@ -20,7 +21,7 @@ use crate::paths;
 use crate::probes::starter::STARTER_PROBES;
 use crate::refs;
 use crate::registry::Quotas;
-use crate::schema::Schema;
+use crate::schema::{RenderHint, RenderKind, Schema};
 use crate::store::disk::DiskStore;
 use crate::store::ObjectStore;
 use crate::tenant::TenantId;
@@ -51,12 +52,17 @@ pub enum AddResult {
 #[serde(tag = "kind")]
 pub enum ShowResult {
     #[serde(rename = "manifest")]
-    Manifest { path: String, manifest: Manifest },
+    Manifest {
+        path: String,
+        manifest: Manifest,
+        render: RenderHint,
+    },
     #[serde(rename = "blob")]
     Blob {
         path: String,
         blob_hash: Hash,
         size: usize,
+        render: RenderHint,
     },
     #[serde(rename = "tree")]
     Tree {
@@ -134,6 +140,27 @@ pub enum DiffStatus {
     Removed,
     Modified,
     Unchanged,
+}
+
+/// Per-file failure inside an automatic reprobe pass. The commit still
+/// succeeds; the path retains its previous manifest. See
+/// `docs/design/21-schema-reprobe.md` §"Failure handling".
+#[derive(Clone, Debug, Serialize)]
+pub struct ReprobeSkip {
+    pub path: String,
+    pub reason: String,
+}
+
+/// Per-file_type summary returned alongside a successful commit when one or
+/// more `schemas/<X>.schema` blobs in the same commit triggered a reprobe.
+#[derive(Clone, Debug, Serialize)]
+pub struct ReprobeSummary {
+    pub file_type: String,
+    /// Number of manifests successfully rebuilt against the new schema.
+    pub count: usize,
+    /// Files where reprobe failed (probe error, missing source, …). The
+    /// commit still succeeded; these paths retain their previous manifest.
+    pub skipped: Vec<ReprobeSkip>,
 }
 
 /// Persistent staging index on disk at `.omp/index.json`.
@@ -1045,9 +1072,11 @@ impl Repo {
                     .get(&hash)?
                     .ok_or_else(|| OmpError::NotFound(format!("manifest {}", hash.hex())))?;
                 let manifest = Manifest::parse(&content)?;
+                let render = self.render_for_file_type(&manifest.file_type, tree_root.as_ref());
                 Ok(ShowResult::Manifest {
                     path: path.to_string(),
                     manifest,
+                    render,
                 })
             }
             Mode::Blob => {
@@ -1059,12 +1088,43 @@ impl Repo {
                     path: path.to_string(),
                     blob_hash: hash,
                     size: content.len(),
+                    render: RenderHint {
+                        kind: RenderKind::Binary,
+                        max_inline_bytes: None,
+                    },
                 })
             }
             Mode::Tree => Ok(ShowResult::Tree {
                 path: path.to_string(),
                 entries: self.list_tree(hash)?,
             }),
+        }
+    }
+
+    /// Best-effort lookup of the schema's render hint **at the same tree as
+    /// the manifest being shown** (so time-traveled requests pick up the
+    /// schema that was committed at that point). On any failure path
+    /// (schema missing, fails to parse, no tree at all), fall back to
+    /// `Binary` so a bad schema never errors a `GET /files`.
+    fn render_for_file_type(&self, file_type: &str, tree_root: Option<&Hash>) -> RenderHint {
+        let fallback = RenderHint {
+            kind: RenderKind::Binary,
+            max_inline_bytes: None,
+        };
+        let Some(root) = tree_root else { return fallback };
+        let path = format!("schemas/{file_type}.schema");
+        let lookup = match paths::get_at(&self.store, &path, root) {
+            Ok(v) => v,
+            Err(_) => return fallback,
+        };
+        let Some((Mode::Blob, h)) = lookup else { return fallback };
+        let content = match self.store.get(&h) {
+            Ok(Some((_, c))) => c,
+            _ => return fallback,
+        };
+        match Schema::parse(&content, file_type) {
+            Ok(s) => s.effective_render(),
+            Err(_) => fallback,
         }
     }
 
@@ -1170,6 +1230,17 @@ impl Repo {
     }
 
     pub fn commit(&self, message: &str, author: Option<AuthorOverride>) -> Result<Hash> {
+        self.commit_with_keys(message, author, None).map(|(h, _)| h)
+    }
+
+    /// Same as `commit` but returns the optional list of reprobe summaries
+    /// alongside the new commit hash. Empty `Vec` when the commit didn't
+    /// touch any schemas.
+    pub fn commit_with_summary(
+        &self,
+        message: &str,
+        author: Option<AuthorOverride>,
+    ) -> Result<(Hash, Vec<ReprobeSummary>)> {
         self.commit_with_keys(message, author, None)
     }
 
@@ -1184,6 +1255,7 @@ impl Repo {
         keys: &crate::keys::TenantKeys,
     ) -> Result<Hash> {
         self.commit_with_keys(message, author, Some(keys))
+            .map(|(h, _)| h)
     }
 
     fn commit_with_keys(
@@ -1191,9 +1263,9 @@ impl Repo {
         message: &str,
         author: Option<AuthorOverride>,
         keys: Option<&crate::keys::TenantKeys>,
-    ) -> Result<Hash> {
+    ) -> Result<(Hash, Vec<ReprobeSummary>)> {
         let _lock = self.write_lock.lock().unwrap();
-        let idx = self.load_index()?;
+        let mut idx = self.load_index()?;
         if idx.entries.is_empty() {
             return Err(OmpError::Conflict("no staged changes".into()));
         }
@@ -1209,6 +1281,23 @@ impl Repo {
 
         let path_key: Option<&[u8; 32]> = keys.map(|k| &k.path_key);
         let commit_key: Option<&[u8; 32]> = keys.map(|k| &k.commit_key);
+
+        // Auto-reprobe: detect staged schemas whose content differs from
+        // HEAD, walk every existing manifest of that file_type, and
+        // rebuild it against the new schema. New manifests are added to
+        // `idx` in-place so the tree-build loop below picks them up. The
+        // schema change AND the rebuilt manifests land in a single
+        // commit. See `docs/design/21-schema-reprobe.md`.
+        //
+        // Encrypted tenants are skipped — server can't read plaintext;
+        // they orchestrate reprobe client-side.
+        let reprobe_summaries: Vec<ReprobeSummary> = if keys.is_none()
+            && std::env::var("OMP_DEFER_REPROBE").is_err()
+        {
+            self.run_auto_reprobe(&mut idx)?
+        } else {
+            Vec::new()
+        };
 
         // Start from HEAD's tree (or empty).
         let mut root: Option<Hash> = self.head_tree()?;
@@ -1268,7 +1357,299 @@ impl Repo {
         // Clear the index.
         self.save_index(&Index::default())?;
 
-        Ok(commit_hash)
+        Ok((commit_hash, reprobe_summaries))
+    }
+
+    /// Detect schema changes in the staged index and rebuild every existing
+    /// manifest of each affected file_type. Mutates `idx` in-place by
+    /// inserting new `Mode::Manifest` Upsert entries. Returns one summary
+    /// per affected file_type. See `docs/design/21-schema-reprobe.md`.
+    fn run_auto_reprobe(&self, idx: &mut Index) -> Result<Vec<ReprobeSummary>> {
+        // Find staged schema blobs.
+        let mut staged_schemas: Vec<(String, Hash)> = Vec::new();
+        for change in idx.entries.values() {
+            if !matches!(change.kind, StagedKind::Upsert) {
+                continue;
+            }
+            let Some(stem) = change
+                .path
+                .strip_prefix("schemas/")
+                .and_then(|p| p.strip_suffix(".schema"))
+            else {
+                continue;
+            };
+            // Schema staged at `schemas/<stem>.schema`. Stem must be a
+            // simple filename, not a nested path.
+            if stem.contains('/') {
+                continue;
+            }
+            let Some(hash) = change.hash else { continue };
+            staged_schemas.push((stem.to_string(), hash));
+        }
+        if staged_schemas.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Load existing schemas at HEAD (un-keyed — encrypted tenants
+        // already opted out of this code path before we got here).
+        let head_schemas_by_type = self.load_all_schemas_with_key(None)?;
+
+        // Pre-build the probe registry once for the whole pass.
+        let probes = self.current_probes()?;
+
+        // Pre-walk HEAD's tree once and collect (path, manifest_hash) for
+        // every Mode::Manifest entry. Reused across schemas (rare to have
+        // more than one in a single commit, but cheap and correct).
+        let head_root = self.root_tree(None)?;
+        let manifest_paths: Vec<(String, Hash)> = match head_root {
+            Some(root) => paths::walk(&self.store, &root)?
+                .into_iter()
+                .filter_map(|(p, m, h)| (m == Mode::Manifest).then_some((p, h)))
+                .collect(),
+            None => Vec::new(),
+        };
+
+        let repo_config = self.current_repo_config()?;
+        let mut summaries: Vec<ReprobeSummary> = Vec::new();
+        let mut cache: ProbeOutputCache = ProbeOutputCache::new();
+
+        for (file_type, new_schema_hash) in staged_schemas {
+            // Parse the staged schema.
+            let (_, new_schema_bytes) =
+                self.store.get(&new_schema_hash)?.ok_or_else(|| {
+                    OmpError::internal(format!(
+                        "staged schema blob {} missing from store",
+                        new_schema_hash.hex()
+                    ))
+                })?;
+            let new_schema = Schema::parse(&new_schema_bytes, &file_type)?;
+
+            // Skip if the schema is unchanged from HEAD.
+            let unchanged = head_schemas_by_type
+                .get(&file_type)
+                .map(|old| schemas_equal(&new_schema, old))
+                .unwrap_or(false);
+            if unchanged {
+                continue;
+            }
+
+            let old_schema = head_schemas_by_type.get(&file_type);
+
+            let mut count: usize = 0;
+            let mut skipped: Vec<ReprobeSkip> = Vec::new();
+
+            for (path, manifest_hash) in &manifest_paths {
+                // Read the old manifest.
+                let Some((_, content)) = self.store.get(manifest_hash)? else {
+                    skipped.push(ReprobeSkip {
+                        path: path.clone(),
+                        reason: format!("manifest blob {} missing", manifest_hash.hex()),
+                    });
+                    continue;
+                };
+                let old_manifest = match Manifest::parse(&content) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        skipped.push(ReprobeSkip {
+                            path: path.clone(),
+                            reason: format!("manifest parse: {e}"),
+                        });
+                        continue;
+                    }
+                };
+                if old_manifest.file_type != file_type {
+                    continue;
+                }
+                // Already at the new schema (e.g. a file ingested in this
+                // commit after the schema was staged).
+                if old_manifest.schema_hash == new_schema_hash {
+                    continue;
+                }
+
+                match self.reprobe_one(
+                    path,
+                    &old_manifest,
+                    &new_schema,
+                    new_schema_hash,
+                    &new_schema_bytes,
+                    old_schema,
+                    &probes,
+                    &repo_config,
+                    &mut cache,
+                ) {
+                    Ok(new_manifest_hash) => {
+                        idx.entries.insert(
+                            path.clone(),
+                            StagedChange {
+                                path: path.clone(),
+                                kind: StagedKind::Upsert,
+                                hash: Some(new_manifest_hash),
+                            },
+                        );
+                        count += 1;
+                    }
+                    Err(e) => {
+                        let reason = e.to_string();
+                        let truncated = if reason.len() > 200 {
+                            format!("{}…", &reason[..200])
+                        } else {
+                            reason
+                        };
+                        skipped.push(ReprobeSkip {
+                            path: path.clone(),
+                            reason: truncated,
+                        });
+                    }
+                }
+            }
+
+            summaries.push(ReprobeSummary {
+                file_type,
+                count,
+                skipped,
+            });
+        }
+
+        Ok(summaries)
+    }
+
+    /// Build a new manifest for `path` against `new_schema`, reusing field
+    /// values from `old_manifest` whenever the field's `Source` is
+    /// unchanged. Stores the new manifest blob and returns its hash.
+    /// Caller stages the upsert.
+    #[allow(clippy::too_many_arguments)]
+    fn reprobe_one(
+        &self,
+        path: &str,
+        old_manifest: &Manifest,
+        new_schema: &Schema,
+        new_schema_hash: Hash,
+        new_schema_blob: &[u8],
+        old_schema: Option<&Schema>,
+        probes: &HashMap<String, ProbeBlob<'static>>,
+        repo_config: &RepoConfig,
+        cache: &mut ProbeOutputCache,
+    ) -> Result<Hash> {
+        // Read the source bytes. v1 plaintext only — encrypted tenants are
+        // already excluded.
+        let (src_ty, source_bytes) = self
+            .store
+            .get(&old_manifest.source_hash)?
+            .ok_or_else(|| {
+                OmpError::NotFound(format!(
+                    "source blob {} for {path} missing",
+                    old_manifest.source_hash.hex()
+                ))
+            })?;
+        if src_ty != "blob" {
+            return Err(OmpError::IngestValidation(format!(
+                "reprobe of chunked source {src_ty:?} not yet supported (path {path})"
+            )));
+        }
+
+        // Carry user-provided field values forward by name. Strip out
+        // anything probe-driven so the engine's user_fields handling
+        // doesn't re-inject probe outputs.
+        let user_fields: BTreeMap<String, FieldValue> = old_manifest
+            .fields
+            .iter()
+            .filter(|(name, _)| {
+                old_schema
+                    .and_then(|s| s.fields.iter().find(|f| &f.name == *name))
+                    .map(|f| matches!(f.source, crate::schema::Source::UserProvided))
+                    .unwrap_or(false)
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        // Field-level reuse: for each field whose Source is unchanged
+        // between old and new schemas AND whose probe (if any) still
+        // resolves to the same framed_hash, copy the value verbatim.
+        let mut reused_fields: BTreeMap<String, FieldValue> = BTreeMap::new();
+        let mut reused_probe_hashes: BTreeMap<String, Hash> = BTreeMap::new();
+        if let Some(old) = old_schema {
+            for new_field in &new_schema.fields {
+                let Some(old_field) = old.fields.iter().find(|f| f.name == new_field.name) else {
+                    continue;
+                };
+                if old_field.source != new_field.source {
+                    continue;
+                }
+                let Some(value) = old_manifest.fields.get(&new_field.name) else {
+                    continue;
+                };
+                if let crate::schema::Source::Probe { probe, .. } = &new_field.source {
+                    let Some(loaded) = probes.get(probe) else {
+                        continue;
+                    };
+                    let Some(old_hash) = old_manifest.probe_hashes.get(probe) else {
+                        continue;
+                    };
+                    if *old_hash != loaded.framed_hash {
+                        continue;
+                    }
+                    reused_probe_hashes.insert(probe.clone(), loaded.framed_hash);
+                }
+                reused_fields.insert(new_field.name.clone(), value.clone());
+            }
+        }
+
+        // Build a synthetic IngestInput so engine::ingest_with_cache can
+        // re-derive only the fields that DIDN'T match. We achieve that by
+        // running ingest with a "skip-already-resolved" hook... since the
+        // engine doesn't have such a hook, we instead always run the full
+        // ingest and the cache + identical (source_hash, probe_hash, args)
+        // makes redundant probe runs free for cached fields. The reuse
+        // optimization above exists primarily for fields whose probe_hash
+        // changed — the engine would re-derive them anyway, so we don't
+        // materially save engine work for those. The optimization is
+        // load-bearing for the cache hit-rate on UNCHANGED fields:
+        // populating `cache` with reused values up-front makes the engine's
+        // own probe-run path return them via cache lookup, never invoking
+        // wasmtime.
+        for new_field in &new_schema.fields {
+            if !reused_fields.contains_key(&new_field.name) {
+                continue;
+            }
+            if let crate::schema::Source::Probe { probe, args } = &new_field.source {
+                let Some(loaded) = probes.get(probe) else { continue };
+                let mut effective = args.clone();
+                effective
+                    .entry("path".to_string())
+                    .or_insert_with(|| FieldValue::String(path.to_string()));
+                let args_canonical = serde_json::to_string(&effective).unwrap_or_default();
+                cache.insert(
+                    (old_manifest.source_hash, loaded.framed_hash, args_canonical),
+                    reused_fields[&new_field.name].clone(),
+                );
+            }
+        }
+        let _ = reused_probe_hashes; // captured into cache via the loop above
+
+        let ingested_at = clock_now();
+        let input = IngestInput {
+            bytes: &source_bytes,
+            user_fields,
+            path,
+            ingested_at: &ingested_at,
+            streaming_builtins: None,
+            content_length: source_bytes.len() as u64,
+            override_source_hash: Some(old_manifest.source_hash),
+        };
+        let view = TreeView {
+            schema: new_schema,
+            schema_blob: new_schema_blob,
+            probes,
+            limits: self.quotas.clamp_probe(repo_config.probes),
+        };
+        let manifest = engine::ingest_with_cache(&input, &view, cache)?;
+        // Sanity: the engine should have stamped the schema_hash from the
+        // bytes we passed in.
+        debug_assert_eq!(manifest.schema_hash, new_schema_hash);
+
+        let bytes = manifest.serialize()?;
+        let new_hash = self.store.put(crate::object::ObjectType::Manifest.as_str(), &bytes)?;
+        Ok(new_hash)
     }
 
     pub fn log_commits(
@@ -1894,13 +2275,12 @@ impl Repo {
     }
 
     fn current_probes(&self) -> Result<HashMap<String, ProbeBlob<'static>>> {
-        // Populated from the starter pack + anything under `probes/` in HEAD
-        // or the working tree. v1: the starter pack bytes are authoritative
-        // for name → wasm; we recompute `framed_hash` against those bytes
-        // using a leaked Vec so the returned `ProbeBlob<'static>` can live
-        // across the call. (The engine only borrows for the duration of one
-        // ingest; `'static` lifetime is a convenient upper bound.)
-        let mut out = HashMap::new();
+        // Populate from the starter pack first (zero-copy via
+        // `Cow::Borrowed`), then merge in anything under `probes/` in HEAD's
+        // tree (`Cow::Owned` from the object store). User probes shadow
+        // starter probes of the same name. See `docs/design/20-server-side-probes.md`
+        // and `docs/design/05-probes.md`.
+        let mut out: HashMap<String, ProbeBlob<'static>> = HashMap::new();
         for probe in STARTER_PROBES {
             let framed_hash = hash_of(ObjectType::Blob, probe.wasm);
             let manifest =
@@ -1908,18 +2288,124 @@ impl Repo {
             out.insert(
                 probe.name.to_string(),
                 ProbeBlob {
-                    wasm: probe.wasm,
+                    wasm: Cow::Borrowed(probe.wasm),
                     framed_hash,
                     max_input_bytes: manifest.max_input_bytes,
                 },
             );
         }
+
+        if let Some(tree_root) = self.root_tree(None)? {
+            // Encrypted tenants do client-side ingest (doc 13) so server-side
+            // probe walking doesn't apply. The walker returns `Unauthorized`
+            // when it hits an encrypted tree without a path key — treat that
+            // as "no tree-resident probes available" rather than failing the
+            // whole ingest.
+            let walk_result = paths::walk(&self.store, &tree_root);
+            let entries = match walk_result {
+                Ok(entries) => entries,
+                Err(OmpError::Unauthorized(_)) => return Ok(out),
+                Err(e) => return Err(e),
+            };
+            for (path, mode, hash) in entries {
+                if mode != Mode::Blob {
+                    continue;
+                }
+                let Some(rest) = path.strip_prefix("probes/") else {
+                    continue;
+                };
+                let Some(ns_name) = rest.strip_suffix(".wasm") else {
+                    continue;
+                };
+                // Sibling `.probe.toml` must exist for the probe to be
+                // loadable. A `.wasm` without one is treated as inert.
+                let manifest_path = format!("probes/{ns_name}.probe.toml");
+                let Some((Mode::Blob, manifest_hash)) =
+                    paths::get_at(&self.store, &manifest_path, &tree_root)?
+                else {
+                    continue;
+                };
+                // Tree paths use '/'; the qualified name is dotted.
+                let qualified = ns_name.replace('/', ".");
+
+                // If the starter pack already registered this name with the
+                // same bytes (the common case after `omp init` writes the
+                // starter set into the tree), skip — Borrowed is cheaper
+                // than Owned and the framed_hash already matches.
+                if let Some(existing) = out.get(&qualified) {
+                    if existing.framed_hash == hash {
+                        continue;
+                    }
+                    tracing::warn!(
+                        probe = %qualified,
+                        starter_hash = %existing.framed_hash.hex(),
+                        tree_hash = %hash.hex(),
+                        "tree-resident probe shadows starter pack with different bytes"
+                    );
+                }
+
+                let (_, wasm_bytes) = self.store.get(&hash)?.ok_or_else(|| {
+                    OmpError::Corrupt(format!(
+                        "probe blob {} listed in tree but missing from store",
+                        hash.hex()
+                    ))
+                })?;
+                let (_, manifest_bytes) =
+                    self.store.get(&manifest_hash)?.ok_or_else(|| {
+                        OmpError::Corrupt(format!(
+                            "probe.toml blob {} listed in tree but missing from store",
+                            manifest_hash.hex()
+                        ))
+                    })?;
+                let manifest = crate::probes::ProbeManifest::parse(&manifest_bytes)?;
+
+                out.insert(
+                    qualified,
+                    ProbeBlob {
+                        wasm: Cow::Owned(wasm_bytes),
+                        framed_hash: hash,
+                        max_input_bytes: manifest.max_input_bytes,
+                    },
+                );
+            }
+        }
         Ok(out)
     }
 
     fn current_probe_names(&self) -> Result<HashSet<String>> {
-        // Mirror `current_probes` but name-only (faster; used for schema val).
-        Ok(STARTER_PROBES.iter().map(|p| p.name.to_string()).collect())
+        // Mirror `current_probes` but name-only (faster; used for schema
+        // validation). User-uploaded probes in the tree must be visible here
+        // too, otherwise schemas referencing them would be rejected at
+        // validation despite the engine knowing how to run them.
+        let mut out: HashSet<String> =
+            STARTER_PROBES.iter().map(|p| p.name.to_string()).collect();
+        if let Some(tree_root) = self.root_tree(None)? {
+            let entries = match paths::walk(&self.store, &tree_root) {
+                Ok(e) => e,
+                // Encrypted trees: see comment in `current_probes`.
+                Err(OmpError::Unauthorized(_)) => return Ok(out),
+                Err(e) => return Err(e),
+            };
+            for (path, mode, _hash) in entries {
+                if mode != Mode::Blob {
+                    continue;
+                }
+                let Some(rest) = path.strip_prefix("probes/") else {
+                    continue;
+                };
+                let Some(ns_name) = rest.strip_suffix(".wasm") else {
+                    continue;
+                };
+                let manifest_path = format!("probes/{ns_name}.probe.toml");
+                if matches!(
+                    paths::get_at(&self.store, &manifest_path, &tree_root)?,
+                    Some((Mode::Blob, _))
+                ) {
+                    out.insert(ns_name.replace('/', "."));
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn stored_mode(&self, hash: &Hash) -> Result<Mode> {
@@ -2063,6 +2549,30 @@ fn looks_like_text(bytes: &[u8]) -> bool {
         .filter(|&&b| b == b'\n' || b == b'\r' || b == b'\t' || (b >= 0x20 && b < 0x7F) || b >= 0x80)
         .count();
     printable * 100 / sample.len() >= 95
+}
+
+/// True iff two schemas are equal in every aspect that affects manifest
+/// content. Used by the auto-reprobe hook to skip rebuilds when the
+/// staged schema is byte-identical to (or semantically the same as) the
+/// HEAD schema. See `docs/design/21-schema-reprobe.md`.
+fn schemas_equal(a: &Schema, b: &Schema) -> bool {
+    if a.file_type != b.file_type
+        || a.allow_extra_fields != b.allow_extra_fields
+        || a.fields.len() != b.fields.len()
+    {
+        return false;
+    }
+    for (af, bf) in a.fields.iter().zip(b.fields.iter()) {
+        if af.name != bf.name
+            || af.required != bf.required
+            || af.type_ != bf.type_
+            || af.source != bf.source
+            || af.fallback != bf.fallback
+        {
+            return false;
+        }
+    }
+    true
 }
 
 fn clock_now() -> String {
