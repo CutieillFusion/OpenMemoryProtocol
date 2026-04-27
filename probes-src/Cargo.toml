@@ -5,7 +5,6 @@ members = [
     "file-size",
     "file-mime",
     "file-sha256",
-    "text-contains-test",
 ]
 
 [workspace.package]
