@@ -53,8 +53,8 @@ async fn query_with_no_predicate_returns_all_user_files() {
 
     let m = body.get("matches").unwrap().as_array().unwrap();
     let paths: Vec<&str> = m.iter().map(|e| e["path"].as_str().unwrap()).collect();
-    assert!(paths.iter().any(|p| *p == "docs/a.md"));
-    assert!(paths.iter().any(|p| *p == "docs/b.md"));
+    assert!(paths.contains(&"docs/a.md"));
+    assert!(paths.contains(&"docs/b.md"));
 }
 
 #[tokio::test]
@@ -295,7 +295,7 @@ async fn query_prefix_restricts_walk() {
         .map(|e| e["path"].as_str().unwrap())
         .collect();
     assert!(paths.iter().all(|p| p.starts_with("policies/")));
-    assert!(paths.iter().any(|p| *p == "policies/p1.md"));
-    assert!(paths.iter().any(|p| *p == "policies/p2.md"));
-    assert!(!paths.iter().any(|p| *p == "drafts/d1.md"));
+    assert!(paths.contains(&"policies/p1.md"));
+    assert!(paths.contains(&"policies/p2.md"));
+    assert!(!paths.contains(&"drafts/d1.md"));
 }

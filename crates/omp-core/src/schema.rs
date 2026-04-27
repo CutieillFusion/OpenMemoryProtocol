@@ -376,16 +376,13 @@ fn heuristic_render_kind(mime_pattern: &str) -> RenderKind {
 }
 
 fn validate_probe_refs_inner(f: &Field, probes: &HashSet<String>) -> Result<()> {
-    match &f.source {
-        Source::Probe { probe, .. } => {
-            if !probes.contains(probe) {
-                return Err(OmpError::SchemaValidation(format!(
-                    "field {:?}: probe {:?} not found in tree",
-                    f.name, probe
-                )));
-            }
+    if let Source::Probe { probe, .. } = &f.source {
+        if !probes.contains(probe) {
+            return Err(OmpError::SchemaValidation(format!(
+                "field {:?}: probe {:?} not found in tree",
+                f.name, probe
+            )));
         }
-        _ => {}
     }
     if let Some(fb) = &f.fallback {
         validate_probe_refs_inner(fb, probes)?;

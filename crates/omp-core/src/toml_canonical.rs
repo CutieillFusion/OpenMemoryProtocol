@@ -44,10 +44,10 @@ fn emit_table(tbl: &toml_edit::Table, path: &[&str], out: &mut String) -> Result
     keys.sort();
     // Header (only if we have a path — the root table has none).
     if !path.is_empty() && has_any_inline(tbl) {
-        write!(out, "[{}]\n", path.join(".")).unwrap();
+        writeln!(out, "[{}]", path.join(".")).unwrap();
     } else if !path.is_empty() && !has_subtables(tbl) {
         // Path non-empty but purely empty: still emit header so the table exists.
-        write!(out, "[{}]\n", path.join(".")).unwrap();
+        writeln!(out, "[{}]", path.join(".")).unwrap();
     }
     for k in &keys {
         let item = &tbl[*k];
@@ -76,7 +76,7 @@ fn emit_table(tbl: &toml_edit::Table, path: &[&str], out: &mut String) -> Result
                         out.push('\n');
                     }
                     first_subtable = false;
-                    write!(out, "[[{}]]\n", join_path(path, k)).unwrap();
+                    writeln!(out, "[[{}]]", join_path(path, k)).unwrap();
                     emit_table_body(t, &push_path(path, k), out)?;
                 }
             }
@@ -107,7 +107,7 @@ fn emit_table_body(tbl: &toml_edit::Table, path: &[&str], out: &mut String) -> R
             Item::ArrayOfTables(arr) => {
                 for t in arr.iter() {
                     out.push('\n');
-                    write!(out, "[[{}]]\n", join_path(path, k)).unwrap();
+                    writeln!(out, "[[{}]]", join_path(path, k)).unwrap();
                     emit_table_body(t, &push_path(path, k), out)?;
                 }
             }
@@ -199,7 +199,7 @@ fn emit_value(v: &Value, out: &mut String) -> Result<()> {
             out.push(']');
         }
         Value::InlineTable(tbl) => {
-            let mut entries: Vec<(&str, &Value)> = tbl.iter().map(|(k, v)| (k, v)).collect();
+            let mut entries: Vec<(&str, &Value)> = tbl.iter().collect();
             entries.sort_by(|a, b| a.0.cmp(b.0));
             out.push('{');
             for (i, (k, val)) in entries.iter().enumerate() {

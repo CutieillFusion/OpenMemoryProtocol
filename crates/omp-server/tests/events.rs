@@ -98,11 +98,9 @@ async fn watch_sse_streams_commit_created() {
         let mut resp = resp;
         let mut buf = Vec::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            let remaining = match deadline.checked_duration_since(tokio::time::Instant::now()) {
-                Some(r) => r,
-                None => break,
-            };
+        while let Some(remaining) =
+            deadline.checked_duration_since(tokio::time::Instant::now())
+        {
             match tokio::time::timeout(remaining, resp.chunk()).await {
                 Ok(Ok(Some(chunk))) => {
                     buf.extend_from_slice(&chunk);

@@ -31,11 +31,7 @@ impl TenantId {
             )));
         }
         for (i, c) in s.chars().enumerate() {
-            let ok = c.is_ascii_lowercase()
-                || c.is_ascii_digit()
-                || c == '_'
-                || c == '-'
-                || (i > 0 && c == '_');
+            let ok = c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-';
             if !ok {
                 return Err(OmpError::InvalidPath(format!(
                     "tenant id has invalid character {c:?} at position {i}"

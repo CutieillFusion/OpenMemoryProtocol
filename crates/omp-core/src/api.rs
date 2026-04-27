@@ -634,7 +634,7 @@ impl Repo {
         let total_chunks: u32 = if plaintext.is_empty() {
             0
         } else {
-            let n = (plaintext.len() + chunk_size_usize - 1) / chunk_size_usize;
+            let n = plaintext.len().div_ceil(chunk_size_usize);
             u32::try_from(n).map_err(|_| {
                 OmpError::internal(format!(
                     "chunk count {n} exceeds u32 — file too large for v1"
@@ -1651,8 +1651,8 @@ impl Repo {
             .into_iter()
             .map(|(p, m, h)| (p, (m, h)))
             .collect();
-        let mut all: BTreeMap<String, (Option<(Mode, Hash)>, Option<(Mode, Hash)>)> =
-            BTreeMap::new();
+        type DiffPair = (Option<(Mode, Hash)>, Option<(Mode, Hash)>);
+        let mut all: BTreeMap<String, DiffPair> = BTreeMap::new();
         for (p, v) in from_entries {
             all.entry(p).or_default().0 = Some(v);
         }
@@ -2026,6 +2026,7 @@ impl Repo {
     /// duplicating schema / MIME / probe loading. The `path_key` is
     /// threaded to the readers so encrypted-tenant ingest can resolve
     /// `schemas/` and `omp.toml` through encrypted-name trees.
+    #[allow(clippy::too_many_arguments)]
     fn build_manifest_with(
         &self,
         path: &str,
@@ -2547,7 +2548,7 @@ fn looks_like_text(bytes: &[u8]) -> bool {
     let printable = sample
         .iter()
         .filter(|&&b| {
-            b == b'\n' || b == b'\r' || b == b'\t' || (b >= 0x20 && b < 0x7F) || b >= 0x80
+            b == b'\n' || b == b'\r' || b == b'\t' || (0x20..0x7F).contains(&b) || b >= 0x80
         })
         .count();
     printable * 100 / sample.len() >= 95

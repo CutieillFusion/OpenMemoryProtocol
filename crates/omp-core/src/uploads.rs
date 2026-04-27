@@ -4,8 +4,8 @@
 //! Each session is a directory under `.omp/uploads/<id>/` containing:
 //!   - `state.toml`      — session metadata: declared size, path hint, created_at
 //!   - `chunk.<offset>`  — one file per `PATCH /uploads/{id}?offset=<bytes>` call;
-//!                         idempotent because re-PATCHing the same offset
-//!                         overwrites the same filename.
+//!     idempotent because re-PATCHing the same offset
+//!     overwrites the same filename.
 //!
 //! Session state lives parallel to `.omp/index.json`: un-versioned, local to
 //! this machine, ignored by the tree walker.

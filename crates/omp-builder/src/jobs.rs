@@ -218,7 +218,7 @@ fn now_iso() -> String {
         .unwrap_or_default();
     // ISO-8601 to second precision. The cli/tracing crates already use
     // RFC3339 elsewhere; we don't need a full date library here.
-    format!("{}", chrono_secs_to_iso(dur.as_secs() as i64))
+    chrono_secs_to_iso(dur.as_secs() as i64)
 }
 
 /// Format an i64 seconds-since-epoch as `YYYY-MM-DDTHH:MM:SSZ`. Pure-Rust

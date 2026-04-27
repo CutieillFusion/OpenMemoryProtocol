@@ -44,6 +44,7 @@ pub struct TenantContext {
 mod serde_bytes {
     use serde::{Deserializer, Serializer};
 
+    #[allow(clippy::ptr_arg)] // serde `with` requires this exact signature.
     pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_bytes(v)
     }

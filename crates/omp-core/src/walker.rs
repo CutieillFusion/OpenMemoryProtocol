@@ -19,23 +19,13 @@ pub struct WalkEntry {
     pub mode: Mode,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct WalkOptions {
     pub ignore_patterns: Vec<String>,
     pub follow_symlinks: bool,
     /// Paths already tracked in HEAD. Ignore patterns do **not** apply to
     /// these — they are walked regardless (matches Git's behavior).
     pub tracked: HashSet<String>,
-}
-
-impl Default for WalkOptions {
-    fn default() -> Self {
-        WalkOptions {
-            ignore_patterns: Vec::new(),
-            follow_symlinks: false,
-            tracked: HashSet::new(),
-        }
-    }
 }
 
 pub fn walk_repo(repo_root: &Path, opts: &WalkOptions) -> Result<Vec<WalkEntry>> {
@@ -184,10 +174,10 @@ fn one_ignore_matches(pattern: &str, path: &str, is_dir: bool) -> bool {
     }
     // Unanchored — match any path component.
     for component in path.split('/') {
-        if glob_match(pat, component) {
-            if !dir_only || is_dir || path_descends_from(path, component) {
-                return true;
-            }
+        if glob_match(pat, component)
+            && (!dir_only || is_dir || path_descends_from(path, component))
+        {
+            return true;
         }
     }
     false

@@ -1,3 +1,7 @@
+// `tonic::Status` is large but it's the gRPC error type; boxing it would
+// just add allocation noise without changing the wire-level behavior.
+#![allow(clippy::result_large_err)]
+
 //! `omp-store` — gRPC service wrapping a single `omp_core::store::DiskStore`.
 //!
 //! Implements `omp.store.v1.Store` from `proto/store.proto`. Per

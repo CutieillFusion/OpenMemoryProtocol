@@ -706,21 +706,16 @@ async fn watch_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
     let mut sub = state.events.subscribe();
     let stream = async_stream::stream! {
-        loop {
-            match sub.next().await {
-                Some(env) => {
-                    let payload = serde_json::json!({
-                        "type": env.r#type,
-                        "tenant": env.tenant,
-                        "occurred_at": env.occurred_at,
-                        "trace_id": env.trace_id,
-                    });
-                    yield Ok::<_, std::convert::Infallible>(
-                        Event::default().event(env.r#type.clone()).data(payload.to_string())
-                    );
-                }
-                None => break,
-            }
+        while let Some(env) = sub.next().await {
+            let payload = serde_json::json!({
+                "type": env.r#type,
+                "tenant": env.tenant,
+                "occurred_at": env.occurred_at,
+                "trace_id": env.trace_id,
+            });
+            yield Ok::<_, std::convert::Infallible>(
+                Event::default().event(env.r#type.clone()).data(payload.to_string())
+            );
         }
     };
     Sse::new(stream.boxed()).keep_alive(axum::response::sse::KeepAlive::default())

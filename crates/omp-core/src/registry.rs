@@ -69,10 +69,11 @@ impl Quotas {
 /// End-to-end encryption mode for a tenant. Immutable after tenant
 /// creation — see `docs/design/13-end-to-end-encryption.md §Migration and
 /// coexistence`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum EncryptionMode {
     /// Server-side ingest; plaintext objects. The v1 default.
+    #[default]
     Plaintext,
     /// Client-side ingest; ciphertext objects only. `identity_pub` is the
     /// tenant's X25519 public key, published so others may create `share`
@@ -81,12 +82,6 @@ pub enum EncryptionMode {
         #[serde(with = "hex_array_32")]
         identity_pub: [u8; 32],
     },
-}
-
-impl Default for EncryptionMode {
-    fn default() -> Self {
-        EncryptionMode::Plaintext
-    }
 }
 
 impl EncryptionMode {

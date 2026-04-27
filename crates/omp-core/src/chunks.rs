@@ -37,7 +37,7 @@ impl ChunksBody {
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = String::with_capacity(self.entries.len() * 80);
         for e in &self.entries {
-            let _ = write!(out, "{} {}\n", e.hash.hex(), e.length);
+            let _ = writeln!(out, "{} {}", e.hash.hex(), e.length);
         }
         out.into_bytes()
     }

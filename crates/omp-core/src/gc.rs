@@ -168,7 +168,7 @@ fn walk_manifest(
     // starts with `source_hash = ...`. Try plaintext first and fall back.
     let source_hash = match Manifest::parse(&body) {
         Ok(m) => {
-            for (_, probe_hash) in &m.probe_hashes {
+            for probe_hash in m.probe_hashes.values() {
                 live.blobs.insert(*probe_hash);
             }
             Some(m.source_hash)
@@ -180,7 +180,7 @@ fn walk_manifest(
                 Some(k) => {
                     let env = crate::encrypted_manifest::EncryptedManifestEnvelope::parse(&body)?;
                     let (manifest, _content_key) = env.open(&k.manifest_key, &k.data_key)?;
-                    for (_, probe_hash) in &manifest.probe_hashes {
+                    for probe_hash in manifest.probe_hashes.values() {
                         live.blobs.insert(*probe_hash);
                     }
                     Some(manifest.source_hash)
@@ -315,8 +315,8 @@ mod tests {
 
         let live = walk(repo.store(), &[commit_hash], None, &[]).unwrap();
         assert_eq!(live.commits.len(), 1);
-        assert!(live.trees.len() >= 1, "at least the root tree");
-        assert!(live.manifests.len() >= 1);
+        assert!(!live.trees.is_empty(), "at least the root tree");
+        assert!(!live.manifests.is_empty());
         assert!(!live.blobs.is_empty(), "blobs should include the content");
     }
 

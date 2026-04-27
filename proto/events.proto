@@ -37,7 +37,7 @@ message CommitCreated {
 }
 
 // 2. ref.updated — published by refs after any ref change (including branches
-//    and HEAD).
+//   and HEAD).
 message RefUpdated {
   string ref_name = 1;
   string old_hash = 2;          // empty for create
@@ -45,7 +45,7 @@ message RefUpdated {
 }
 
 // 3. manifest.staged — published by ingest when a manifest enters the staging
-//    area (pre-commit). Useful for dev-time observability, not durability.
+//   area (pre-commit). Useful for dev-time observability, not durability.
 message ManifestStaged {
   string path = 1;
   string manifest_hash = 2;
@@ -54,7 +54,7 @@ message ManifestStaged {
 }
 
 // 4. commit.failed — published by refs when a commit fails (e.g. CAS conflict
-//    after retries).
+//   after retries).
 message CommitFailed {
   string reason_code = 1;
   string idempotency_key = 2;

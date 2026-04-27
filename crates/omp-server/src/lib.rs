@@ -1,3 +1,7 @@
+// `axum::Response` is the natural Err for HTTP handler helpers; boxing
+// it would require unwrapping at every call site for no real benefit.
+#![allow(clippy::result_large_err)]
+
 //! Library surface of the OMP HTTP server.
 //!
 //! `AppState` holds the tenant registry, the tenants-base directory, and a
