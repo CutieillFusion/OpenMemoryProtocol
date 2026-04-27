@@ -89,7 +89,10 @@ fn main() {
         .current_dir(&frontend_dir)
         .status();
     if let Err(e) = npm_build {
-        fail_with_help(&frontend_dir, &format!("`npm run build` failed to launch: {e}"));
+        fail_with_help(
+            &frontend_dir,
+            &format!("`npm run build` failed to launch: {e}"),
+        );
     } else if let Ok(s) = npm_build {
         if !s.success() {
             fail_with_help(&frontend_dir, "`npm run build` exited non-zero");
@@ -110,7 +113,9 @@ fn ensure_build_dir_exists(_build_dir: &Path, fallback: &Path) {
             "omp-gateway build.rs: OMP_SKIP_UI_BUILD set but {} is missing.",
             fallback.display()
         );
-        eprintln!("Pre-stage the directory or unset OMP_SKIP_UI_BUILD to let the build script run npm.");
+        eprintln!(
+            "Pre-stage the directory or unset OMP_SKIP_UI_BUILD to let the build script run npm."
+        );
         eprintln!("Or build with `--no-default-features` to drop the embedded UI.");
         std::process::exit(1);
     }

@@ -174,8 +174,8 @@ pub fn ingest_with_cache(
         for k in input.user_fields.keys() {
             if !view.schema.fields.iter().any(|f| &f.name == k) {
                 return Err(OmpError::IngestValidation(format!(
-                    "field {:?} is not declared in schema (and allow_extra_fields is false)"
-                    , k
+                    "field {:?} is not declared in schema (and allow_extra_fields is false)",
+                    k
                 )));
             }
         }
@@ -211,8 +211,15 @@ fn resolve_field(
     probe_hashes: &mut BTreeMap<String, Hash>,
     cache: &mut ProbeOutputCache,
 ) -> Result<FieldValue> {
-    let primary =
-        resolve_source(&field.source, field, input, view, resolved, probe_hashes, cache)?;
+    let primary = resolve_source(
+        &field.source,
+        field,
+        input,
+        view,
+        resolved,
+        probe_hashes,
+        cache,
+    )?;
     if !primary.is_null() {
         return Ok(primary);
     }
@@ -282,7 +289,10 @@ fn resolve_source(
             // Probes that take kwarg `path` pick it up from the ingest input.
             let mut effective = args.clone();
             if !effective.contains_key("path") {
-                effective.insert("path".to_string(), FieldValue::String(input.path.to_string()));
+                effective.insert(
+                    "path".to_string(),
+                    FieldValue::String(input.path.to_string()),
+                );
             }
 
             // Cache lookup. Key is (source_hash, probe_framed_hash,
@@ -317,10 +327,7 @@ fn resolve_source(
             .unwrap_or(FieldValue::Null)),
 
         Source::Field { from, transform } => {
-            let base = resolved
-                .get(from)
-                .cloned()
-                .unwrap_or(FieldValue::Null);
+            let base = resolved.get(from).cloned().unwrap_or(FieldValue::Null);
             Ok(transform.apply(base))
         }
     }

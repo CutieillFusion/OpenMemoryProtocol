@@ -153,7 +153,9 @@ fn head_round_trip() {
 
     // Write a detached HEAD. We use a known commit hash format; the server
     // accepts any string for HEAD.
-    client.write_head("ref: refs/heads/feature").expect("write head");
+    client
+        .write_head("ref: refs/heads/feature")
+        .expect("write head");
     let after = client.read_head().unwrap();
     assert_eq!(after, "ref: refs/heads/feature");
 }

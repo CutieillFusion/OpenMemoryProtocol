@@ -83,7 +83,10 @@ impl GatewayState {
 
     /// Resolve a Bearer token to a tenant id, if recognized.
     pub fn resolve_tenant(&self, headers: &HeaderMap) -> Option<String> {
-        let auth = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
+        let auth = headers
+            .get(axum::http::header::AUTHORIZATION)?
+            .to_str()
+            .ok()?;
         let token = auth.strip_prefix("Bearer ")?.trim();
 
         if self.config.allow_dev_tokens {
@@ -140,7 +143,11 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
     let tenant = match state.resolve_tenant(req.headers()) {
         Some(t) => t,
         None => {
-            return error_response(StatusCode::UNAUTHORIZED, "unauthorized", "missing or unknown bearer token");
+            return error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "missing or unknown bearer token",
+            );
         }
     };
 
@@ -176,13 +183,21 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
     let ctx = match state.signer.issue_default(&tenant, Vec::new()) {
         Ok(c) => c,
         Err(e) => {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "ctx_sign", &e.to_string());
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ctx_sign",
+                &e.to_string(),
+            );
         }
     };
     let ctx_b64 = match ctx.encode() {
         Ok(s) => s,
         Err(e) => {
-            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "ctx_encode", &e.to_string());
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ctx_encode",
+                &e.to_string(),
+            );
         }
     };
 
@@ -277,11 +292,7 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
         let resp_bytes = match upstream_resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                return error_response(
-                    StatusCode::BAD_GATEWAY,
-                    "upstream_body",
-                    &e.to_string(),
-                );
+                return error_response(StatusCode::BAD_GATEWAY, "upstream_body", &e.to_string());
             }
         };
         Body::from(resp_bytes)

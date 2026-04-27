@@ -67,8 +67,8 @@ pub fn router(state: Arc<AppState>) -> Router {
 
 fn to_response(err: OmpError) -> Response {
     let code = err.code();
-    let status = StatusCode::from_u16(code.http_status())
-        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let status =
+        StatusCode::from_u16(code.http_status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = json!({
         "error": {
             "code": code.as_str(),
@@ -145,7 +145,10 @@ fn ok_compact<T: Serialize>(v: T, compact: impl FnOnce(&mut serde_json::Value)) 
     (StatusCode::OK, Json(val)).into_response()
 }
 
-async fn resolve_repo(state: &AppState, headers: &HeaderMap) -> std::result::Result<TenantRepo, Response> {
+async fn resolve_repo(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> std::result::Result<TenantRepo, Response> {
     auth::resolve(state, headers).await.map_err(to_response)
 }
 
@@ -246,7 +249,10 @@ async fn post_file(
     let Some(bytes) = file_bytes else {
         return to_response(OmpError::InvalidPath("missing file".into()));
     };
-    match tr.repo.add(&path, &bytes, Some(fields), file_type.as_deref()) {
+    match tr
+        .repo
+        .add(&path, &bytes, Some(fields), file_type.as_deref())
+    {
         Ok(res) => ok_json(res),
         Err(e) => to_response(e),
     }
@@ -276,7 +282,9 @@ async fn get_file(
         Err(e) => return e,
     };
     match tr.repo.show(&path, q.at.as_deref()) {
-        Ok(ShowResult::Manifest { manifest, render, .. }) => {
+        Ok(ShowResult::Manifest {
+            manifest, render, ..
+        }) => {
             // Inline `render` as a sibling of the manifest's serialized
             // fields so the response stays a single flat object — the UI
             // currently treats the body as a Manifest and just sees one
@@ -286,11 +294,19 @@ async fn get_file(
                 compact_manifest(&mut value);
             }
             if let Some(obj) = value.as_object_mut() {
-                obj.insert("render".to_string(), serde_json::to_value(render).unwrap_or(serde_json::Value::Null));
+                obj.insert(
+                    "render".to_string(),
+                    serde_json::to_value(render).unwrap_or(serde_json::Value::Null),
+                );
             }
             (StatusCode::OK, Json(value)).into_response()
         }
-        Ok(ShowResult::Blob { blob_hash, size, render, .. }) => {
+        Ok(ShowResult::Blob {
+            blob_hash,
+            size,
+            render,
+            ..
+        }) => {
             // Blob responses are hash-centric by design (the caller asked for
             // a blob-addressable object) — always include.
             ok_json(json!({ "kind": "blob", "hash": blob_hash, "size": size, "render": render }))
@@ -317,7 +333,10 @@ async fn get_bytes(
         Err(e) => return e,
     };
     match tr.repo.bytes_of(&path, q.at.as_deref()) {
-        Ok(bytes) => ([(axum::http::header::CONTENT_TYPE, "application/octet-stream")], bytes)
+        Ok(bytes) => (
+            [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+            bytes,
+        )
             .into_response(),
         Err(e) => to_response(e),
     }
@@ -534,10 +553,7 @@ async fn diff_route(
     }
 }
 
-async fn list_branches(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Response {
+async fn list_branches(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let tr = match resolve_repo(&state, &headers).await {
         Ok(t) => t,
         Err(e) => return e,
@@ -684,9 +700,7 @@ async fn list_schemas_route(
 // makes "the change feed is the broker projection" literally true (see
 // `docs/design/15-query-and-discovery.md` and `16-event-streaming.md`).
 
-async fn watch_route(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn watch_route(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     use axum::response::sse::{Event, Sse};
     use futures::StreamExt;
 
@@ -709,8 +723,7 @@ async fn watch_route(
             }
         }
     };
-    Sse::new(stream.boxed())
-        .keep_alive(axum::response::sse::KeepAlive::default())
+    Sse::new(stream.boxed()).keep_alive(axum::response::sse::KeepAlive::default())
 }
 
 // ---- /audit (docs/design/18-observability.md § Audit log) -----------------
@@ -783,7 +796,10 @@ async fn test_ingest(
     let Some(bytes) = file_bytes else {
         return to_response(OmpError::InvalidPath("missing file".into()));
     };
-    match tr.repo.test_ingest(&path, &bytes, Some(fields), proposed_schema.as_deref()) {
+    match tr
+        .repo
+        .test_ingest(&path, &bytes, Some(fields), proposed_schema.as_deref())
+    {
         Ok(m) => ok_json(m),
         Err(e) => to_response(e),
     }
@@ -821,9 +837,7 @@ fn json_to_field(v: &serde_json::Value) -> FieldValue {
             }
         }
         serde_json::Value::String(s) => FieldValue::String(s.clone()),
-        serde_json::Value::Array(arr) => {
-            FieldValue::List(arr.iter().map(json_to_field).collect())
-        }
+        serde_json::Value::Array(arr) => FieldValue::List(arr.iter().map(json_to_field).collect()),
         serde_json::Value::Object(map) => {
             let mut out = std::collections::BTreeMap::new();
             for (k, v) in map {
@@ -910,7 +924,10 @@ async fn post_upload_commit(
         }
         out
     });
-    match tr.repo.upload_commit(&id, &body.path, fields, body.file_type.as_deref()) {
+    match tr
+        .repo
+        .upload_commit(&id, &body.path, fields, body.file_type.as_deref())
+    {
         Ok(r) => ok_json(r),
         Err(e) => to_response(e),
     }

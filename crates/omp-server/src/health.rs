@@ -19,11 +19,7 @@ use serde_json::json;
 use crate::AppState;
 
 pub async fn livez() -> Response {
-    (
-        StatusCode::OK,
-        Json(json!({"ok": true, "check": "livez"})),
-    )
-        .into_response()
+    (StatusCode::OK, Json(json!({"ok": true, "check": "livez"}))).into_response()
 }
 
 pub async fn readyz(State(state): State<Arc<AppState>>) -> Response {
@@ -32,18 +28,16 @@ pub async fn readyz(State(state): State<Arc<AppState>>) -> Response {
 
     // Probe the backing store(s) for basic reachability.
     match &state.mode {
-        crate::Mode::NoAuth { repo } => {
-            match repo.store().read_head() {
-                Ok(_) => {
-                    checks.insert("store".into(), json!({"ok": true}));
-                }
-                Err(e) => {
-                    all_ok = false;
-                    let msg: String = e.to_string();
-                    checks.insert("store".into(), json!({"ok": false, "error": msg}));
-                }
+        crate::Mode::NoAuth { repo } => match repo.store().read_head() {
+            Ok(_) => {
+                checks.insert("store".into(), json!({"ok": true}));
             }
-        }
+            Err(e) => {
+                all_ok = false;
+                let msg: String = e.to_string();
+                checks.insert("store".into(), json!({"ok": false, "error": msg}));
+            }
+        },
         crate::Mode::MultiTenant { tenants_base, .. } => {
             match tokio::fs::metadata(tenants_base).await {
                 Ok(_) => {
@@ -60,7 +54,11 @@ pub async fn readyz(State(state): State<Arc<AppState>>) -> Response {
         }
     }
 
-    let status = if all_ok { StatusCode::OK } else { StatusCode::SERVICE_UNAVAILABLE };
+    let status = if all_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
     (status, Json(json!({"ok": all_ok, "checks": checks}))).into_response()
 }
 
@@ -73,7 +71,10 @@ pub async fn metrics() -> Response {
     let body = crate::metrics::render();
     (
         StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
         body,
     )
         .into_response()

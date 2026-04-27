@@ -47,9 +47,7 @@ async fn spawn_multi_tenant_with_quota(
         bytes: bytes_cap,
         ..Quotas::unlimited()
     };
-    let token = reg
-        .create(TenantId::new("alice").unwrap(), quotas)
-        .unwrap();
+    let token = reg.create(TenantId::new("alice").unwrap(), quotas).unwrap();
     reg.save(&registry_path).unwrap();
     let _ = td;
     let state = AppState::multi(tenants_base.to_path_buf(), registry_path).unwrap();
@@ -111,7 +109,12 @@ async fn upload_session_happy_path() {
         .send()
         .await
         .unwrap();
-    assert_eq!(commit.status(), 200, "commit body: {:?}", commit.text().await);
+    assert_eq!(
+        commit.status(),
+        200,
+        "commit body: {:?}",
+        commit.text().await
+    );
 
     // Commit the repo so /files can find the tree entry. (upload_commit
     // stages; POST /commit snapshots into a commit — same contract as
@@ -245,10 +248,15 @@ async fn upload_session_ttl_cleanup_reaps() {
     let td = TempDir::new().unwrap();
     let repo = Repo::init(td.path()).unwrap();
     let h = repo.upload_open(16).unwrap();
-    repo.upload_write(&h.upload_id, 0, b"abcdefghijklmnop").unwrap();
+    repo.upload_write(&h.upload_id, 0, b"abcdefghijklmnop")
+        .unwrap();
 
     // Manually age the state.toml backward by 48h by rewriting the created_at.
-    let state_path = td.path().join(".omp/uploads").join(&h.upload_id).join("state.toml");
+    let state_path = td
+        .path()
+        .join(".omp/uploads")
+        .join(&h.upload_id)
+        .join("state.toml");
     let body = std::fs::read_to_string(&state_path).unwrap();
     let aged = body.replace(
         // The session was just created "now"; replace with a far-past time.

@@ -196,11 +196,7 @@ fn walk_manifest(
     Ok(())
 }
 
-fn walk_source(
-    store: &dyn ObjectStore,
-    source_hash: &Hash,
-    live: &mut LiveSet,
-) -> Result<()> {
+fn walk_source(store: &dyn ObjectStore, source_hash: &Hash, live: &mut LiveSet) -> Result<()> {
     // Source may be a single blob (v1 path) or a chunks object.
     let (ty, body) = store
         .get(source_hash)?
@@ -263,11 +259,9 @@ fn parse_commit_headers(bytes: &[u8]) -> Result<Commit> {
                 }
             }
             Ok(Commit {
-                tree: tree
-                    .ok_or_else(|| OmpError::Corrupt("commit: missing tree".into()))?,
+                tree: tree.ok_or_else(|| OmpError::Corrupt("commit: missing tree".into()))?,
                 parents,
-                author: author
-                    .ok_or_else(|| OmpError::Corrupt("commit: missing author".into()))?,
+                author: author.ok_or_else(|| OmpError::Corrupt("commit: missing author".into()))?,
                 message: String::new(),
             })
         }

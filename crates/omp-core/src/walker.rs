@@ -95,7 +95,8 @@ fn walk_inner(
         }
 
         let is_tracked = opts.tracked.contains(&repo_path);
-        let is_ignored = !is_tracked && ignore_matches(&opts.ignore_patterns, &repo_path, metadata.is_dir());
+        let is_ignored =
+            !is_tracked && ignore_matches(&opts.ignore_patterns, &repo_path, metadata.is_dir());
         if is_ignored {
             continue;
         }
@@ -111,7 +112,8 @@ fn walk_inner(
             } else {
                 path.parent().unwrap_or(root).join(target)
             };
-            let target_meta = std::fs::metadata(&resolved).map_err(|e| OmpError::io(&resolved, e))?;
+            let target_meta =
+                std::fs::metadata(&resolved).map_err(|e| OmpError::io(&resolved, e))?;
             if target_meta.is_dir() {
                 walk_inner(root, &resolved, opts, visited, out)?;
                 continue;
@@ -177,7 +179,8 @@ fn one_ignore_matches(pattern: &str, path: &str, is_dir: bool) -> bool {
     if pat.contains('/') {
         let anchored = pat.strip_prefix('/').unwrap_or(pat);
         // Match against path or a prefix of path.
-        return glob_match(anchored, path) && (!dir_only || is_dir || path_descends_from(path, anchored));
+        return glob_match(anchored, path)
+            && (!dir_only || is_dir || path_descends_from(path, anchored));
     }
     // Unanchored — match any path component.
     for component in path.split('/') {
@@ -193,9 +196,7 @@ fn one_ignore_matches(pattern: &str, path: &str, is_dir: bool) -> bool {
 fn path_descends_from(path: &str, prefix: &str) -> bool {
     path == prefix
         || path.starts_with(&format!("{prefix}/"))
-        || path
-            .split('/')
-            .any(|c| c == prefix)
+        || path.split('/').any(|c| c == prefix)
 }
 
 fn glob_match(pattern: &str, text: &str) -> bool {

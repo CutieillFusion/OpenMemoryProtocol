@@ -266,8 +266,7 @@ pub fn generate_token() -> String {
     // — deferred; this is a server path and targets Unix first.
     let mut file = File::open("/dev/urandom").expect("open /dev/urandom");
     file.read_exact(&mut bytes).expect("read /dev/urandom");
-    const ALPHA: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut out = String::with_capacity(43);
     // Base-62 encode 32 random bytes by chunking. Simpler: hex.
     for b in bytes {
@@ -384,10 +383,7 @@ token_sha256 = "0000000000000000000000000000000000000000000000000000000000000000
         let mut reg = TenantRegistry::default();
         reg.create(TenantId::new("alice").unwrap(), Quotas::unlimited())
             .unwrap();
-        assert_eq!(
-            reg.entries[0].encryption_mode,
-            EncryptionMode::Plaintext
-        );
+        assert_eq!(reg.entries[0].encryption_mode, EncryptionMode::Plaintext);
     }
 
     #[test]

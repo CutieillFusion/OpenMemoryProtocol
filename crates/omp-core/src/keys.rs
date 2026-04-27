@@ -209,26 +209,14 @@ mod tests {
 
     #[test]
     fn different_tenants_derive_different_keys() {
-        let a = TenantKeys::unlock(
-            b"same passphrase",
-            &TenantId::new("alice").unwrap(),
-        )
-        .unwrap();
-        let b = TenantKeys::unlock(
-            b"same passphrase",
-            &TenantId::new("bob").unwrap(),
-        )
-        .unwrap();
+        let a = TenantKeys::unlock(b"same passphrase", &TenantId::new("alice").unwrap()).unwrap();
+        let b = TenantKeys::unlock(b"same passphrase", &TenantId::new("bob").unwrap()).unwrap();
         assert_ne!(a.data_key, b.data_key);
     }
 
     #[test]
     fn generate_identity_produces_distinct_keypair() {
-        let mut k = TenantKeys::unlock(
-            b"hello",
-            &TenantId::new("alice").unwrap(),
-        )
-        .unwrap();
+        let mut k = TenantKeys::unlock(b"hello", &TenantId::new("alice").unwrap()).unwrap();
         let pub_a = k.generate_identity();
         // Re-generate: different keypair.
         let pub_b = k.generate_identity();

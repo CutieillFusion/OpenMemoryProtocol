@@ -230,11 +230,7 @@ impl Repo {
     /// Initialize a repo scoped to a specific tenant with the given quota
     /// ceiling. Creates `.omp/`, drops starter schemas + probes + `omp.toml` +
     /// `.omp/local.toml`.
-    pub fn init_tenant(
-        root: impl AsRef<Path>,
-        tenant: TenantId,
-        quotas: Quotas,
-    ) -> Result<Self> {
+    pub fn init_tenant(root: impl AsRef<Path>, tenant: TenantId, quotas: Quotas) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
         fs::create_dir_all(&root).map_err(|e| OmpError::io(&root, e))?;
         let store = DiskStore::init(&root)?;
@@ -285,11 +281,7 @@ impl Repo {
     }
 
     /// Open an existing tenant-scoped repo.
-    pub fn open_tenant(
-        root: impl AsRef<Path>,
-        tenant: TenantId,
-        quotas: Quotas,
-    ) -> Result<Self> {
+    pub fn open_tenant(root: impl AsRef<Path>, tenant: TenantId, quotas: Quotas) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
         let store = DiskStore::open(&root)?;
         Ok(Repo {
@@ -333,7 +325,9 @@ impl Repo {
             }
             for entry in fs::read_dir(bucket.path()).map_err(|e| OmpError::io(bucket.path(), e))? {
                 let entry = entry.map_err(|e| OmpError::io(bucket.path(), e))?;
-                let meta = entry.metadata().map_err(|e| OmpError::io(entry.path(), e))?;
+                let meta = entry
+                    .metadata()
+                    .map_err(|e| OmpError::io(entry.path(), e))?;
                 if meta.is_file() {
                     count += 1;
                     bytes += meta.len();
@@ -354,10 +348,7 @@ impl Repo {
         if let Some(cap) = self.quotas.bytes {
             if cur_bytes.saturating_add(incoming_bytes) > cap {
                 return Err(OmpError::QuotaExceeded {
-                    limit: format!(
-                        "bytes: {} + {} > {}",
-                        cur_bytes, incoming_bytes, cap
-                    ),
+                    limit: format!("bytes: {} + {} > {}", cur_bytes, incoming_bytes, cap),
                 });
             }
         }
@@ -430,7 +421,9 @@ impl Repo {
         )?;
         let blob_hash = self.store.put(ObjectType::Blob.as_str(), bytes)?;
         let manifest_bytes = manifest.serialize()?;
-        let manifest_hash = self.store.put(ObjectType::Manifest.as_str(), &manifest_bytes)?;
+        let manifest_hash = self
+            .store
+            .put(ObjectType::Manifest.as_str(), &manifest_bytes)?;
         self.stage_upsert(path, Mode::Manifest, manifest_hash)?;
         Ok(AddResult::Manifest {
             path: path.to_string(),
@@ -455,9 +448,7 @@ impl Repo {
         use sha2::{Digest, Sha256};
 
         let chunk_size_usize = usize::try_from(chunk_size).map_err(|_| {
-            OmpError::internal(format!(
-                "chunk_size_bytes {chunk_size} exceeds usize"
-            ))
+            OmpError::internal(format!("chunk_size_bytes {chunk_size} exceeds usize"))
         })?;
 
         let mut entries: Vec<ChunkEntry> = Vec::new();
@@ -474,9 +465,7 @@ impl Repo {
 
         let chunks_body = ChunksBody::new(entries);
         let chunks_bytes = chunks_body.serialize();
-        let chunks_hash = self
-            .store
-            .put(ObjectType::Chunks.as_str(), &chunks_bytes)?;
+        let chunks_hash = self.store.put(ObjectType::Chunks.as_str(), &chunks_bytes)?;
 
         let sniff_prefix = sniff_prefix_of(bytes);
         let manifest = self.build_manifest_with(
@@ -637,9 +626,7 @@ impl Repo {
         use sha2::{Digest, Sha256};
 
         let chunk_size_usize = usize::try_from(chunk_size).map_err(|_| {
-            OmpError::internal(format!(
-                "chunk_size_bytes {chunk_size} exceeds usize"
-            ))
+            OmpError::internal(format!("chunk_size_bytes {chunk_size} exceeds usize"))
         })?;
 
         // AAD binds each chunk to its position and the total count so
@@ -683,9 +670,7 @@ impl Repo {
 
         let chunks_body = ChunksBody::new(entries);
         let chunks_bytes = chunks_body.serialize();
-        let chunks_hash = self
-            .store
-            .put(ObjectType::Chunks.as_str(), &chunks_bytes)?;
+        let chunks_hash = self.store.put(ObjectType::Chunks.as_str(), &chunks_bytes)?;
 
         Ok((
             chunks_hash,
@@ -719,8 +704,7 @@ impl Repo {
                 None => None,
             }
         };
-        let (mode, hash) = target
-            .ok_or_else(|| OmpError::NotFound(format!("path {path:?}")))?;
+        let (mode, hash) = target.ok_or_else(|| OmpError::NotFound(format!("path {path:?}")))?;
         if mode != Mode::Manifest {
             return Err(OmpError::InvalidPath(format!(
                 "path {path:?} is not a manifest"
@@ -755,21 +739,18 @@ impl Repo {
             "chunks" => {
                 let parsed = ChunksBody::parse(&body)?;
                 let total: u32 = u32::try_from(parsed.entries.len()).map_err(|_| {
-                    OmpError::Corrupt(
-                        "chunks body has more than u32::MAX entries".into(),
-                    )
+                    OmpError::Corrupt("chunks body has more than u32::MAX entries".into())
                 })?;
                 let total_be = total.to_be_bytes();
                 let mut out = Vec::with_capacity(parsed.total_length() as usize);
                 for (idx, entry) in parsed.entries.iter().enumerate() {
                     let idx32 = u32::try_from(idx).map_err(|_| {
-                        OmpError::Corrupt(
-                            "chunks body has more than u32::MAX entries".into(),
-                        )
+                        OmpError::Corrupt("chunks body has more than u32::MAX entries".into())
                     })?;
-                    let (chunk_ty, ct) = self.store.get(&entry.hash)?.ok_or_else(|| {
-                        OmpError::NotFound(format!("chunk {}", entry.hash.hex()))
-                    })?;
+                    let (chunk_ty, ct) = self
+                        .store
+                        .get(&entry.hash)?
+                        .ok_or_else(|| OmpError::NotFound(format!("chunk {}", entry.hash.hex())))?;
                     if chunk_ty != "blob" {
                         return Err(OmpError::Corrupt(format!(
                             "chunk {} is not a blob",
@@ -781,10 +762,7 @@ impl Repo {
                     aad[9..13].copy_from_slice(&idx32.to_be_bytes());
                     aad[13..17].copy_from_slice(&total_be);
                     let pt = aead::open(content_key, &aad, &ct).map_err(|_| {
-                        OmpError::Unauthorized(format!(
-                            "unable to open chunk {}",
-                            entry.hash.hex()
-                        ))
+                        OmpError::Unauthorized(format!("unable to open chunk {}", entry.hash.hex()))
                     })?;
                     out.extend_from_slice(&pt);
                 }
@@ -834,8 +812,7 @@ impl Repo {
             .get(&manifest_hash)?
             .ok_or_else(|| OmpError::NotFound(format!("manifest {}", manifest_hash.hex())))?;
         let envelope = EncryptedManifestEnvelope::parse(&env_bytes)?;
-        let (manifest, content_key) =
-            envelope.open(&keys.manifest_key, &keys.data_key)?;
+        let (manifest, content_key) = envelope.open(&keys.manifest_key, &keys.data_key)?;
 
         let mut recipient_entries = Vec::with_capacity(recipients.len());
         for (tenant, pk) in recipients {
@@ -855,9 +832,7 @@ impl Repo {
             recipients: recipient_entries,
         };
         let body_bytes = body.serialize()?;
-        let share_hash = self
-            .store
-            .put(ObjectType::Share.as_str(), &body_bytes)?;
+        let share_hash = self.store.put(ObjectType::Share.as_str(), &body_bytes)?;
         Ok(share_hash)
     }
 
@@ -920,13 +895,12 @@ impl Repo {
             Some(&keys.path_key),
         )?;
 
-        let envelope_bytes =
-            crate::encrypted_manifest::EncryptedManifestEnvelope::seal(
-                &manifest,
-                &new_content_key,
-                &keys.manifest_key,
-                &keys.data_key,
-            )?;
+        let envelope_bytes = crate::encrypted_manifest::EncryptedManifestEnvelope::seal(
+            &manifest,
+            &new_content_key,
+            &keys.manifest_key,
+            &keys.data_key,
+        )?;
         let new_manifest_hash = self
             .store
             .put(ObjectType::Manifest.as_str(), &envelope_bytes)?;
@@ -951,9 +925,7 @@ impl Repo {
             recipients,
         };
         let share_bytes = share.serialize()?;
-        let share_hash = self
-            .store
-            .put(ObjectType::Share.as_str(), &share_bytes)?;
+        let share_hash = self.store.put(ObjectType::Share.as_str(), &share_bytes)?;
         Ok(share_hash)
     }
 
@@ -987,10 +959,9 @@ impl Repo {
             ))
         })?;
         let wrapped = hex_decode(&recipient.wrapped_key)?;
-        let content_key = identity::unwrap_from_stanza(&wrapped, identity_priv)
-            .map_err(|_| OmpError::Unauthorized(
-                "unable to unwrap content key from share".into()
-            ))?;
+        let content_key = identity::unwrap_from_stanza(&wrapped, identity_priv).map_err(|_| {
+            OmpError::Unauthorized("unable to unwrap content key from share".into())
+        })?;
         Ok((parsed.for_hash, content_key))
     }
 
@@ -1033,7 +1004,9 @@ impl Repo {
             clock_now(),
         )?;
         let manifest_bytes = manifest.serialize()?;
-        let manifest_hash = self.store.put(ObjectType::Manifest.as_str(), &manifest_bytes)?;
+        let manifest_hash = self
+            .store
+            .put(ObjectType::Manifest.as_str(), &manifest_bytes)?;
         self.stage_upsert(path, Mode::Manifest, manifest_hash)?;
         Ok(manifest)
     }
@@ -1111,13 +1084,17 @@ impl Repo {
             kind: RenderKind::Binary,
             max_inline_bytes: None,
         };
-        let Some(root) = tree_root else { return fallback };
+        let Some(root) = tree_root else {
+            return fallback;
+        };
         let path = format!("schemas/{file_type}.schema");
         let lookup = match paths::get_at(&self.store, &path, root) {
             Ok(v) => v,
             Err(_) => return fallback,
         };
-        let Some((Mode::Blob, h)) = lookup else { return fallback };
+        let Some((Mode::Blob, h)) = lookup else {
+            return fallback;
+        };
         let content = match self.store.get(&h) {
             Ok(Some((_, c))) => c,
             _ => return fallback,
@@ -1142,10 +1119,9 @@ impl Repo {
                     .get(&hash)?
                     .ok_or_else(|| OmpError::NotFound(format!("manifest {}", hash.hex())))?;
                 let manifest = Manifest::parse(&content)?;
-                let (_, blob) = self
-                    .store
-                    .get(&manifest.source_hash)?
-                    .ok_or_else(|| OmpError::NotFound(format!("blob {}", manifest.source_hash.hex())))?;
+                let (_, blob) = self.store.get(&manifest.source_hash)?.ok_or_else(|| {
+                    OmpError::NotFound(format!("blob {}", manifest.source_hash.hex()))
+                })?;
                 Ok(blob)
             }
             Mode::Blob => {
@@ -1161,12 +1137,7 @@ impl Repo {
         }
     }
 
-    pub fn ls(
-        &self,
-        path: &str,
-        at: Option<&str>,
-        recursive: bool,
-    ) -> Result<Vec<TreeEntryOut>> {
+    pub fn ls(&self, path: &str, at: Option<&str>, recursive: bool) -> Result<Vec<TreeEntryOut>> {
         let tree_root = self
             .root_tree(at)?
             .ok_or_else(|| OmpError::NotFound("no commits".into()))?;
@@ -1291,13 +1262,12 @@ impl Repo {
         //
         // Encrypted tenants are skipped — server can't read plaintext;
         // they orchestrate reprobe client-side.
-        let reprobe_summaries: Vec<ReprobeSummary> = if keys.is_none()
-            && std::env::var("OMP_DEFER_REPROBE").is_err()
-        {
-            self.run_auto_reprobe(&mut idx)?
-        } else {
-            Vec::new()
-        };
+        let reprobe_summaries: Vec<ReprobeSummary> =
+            if keys.is_none() && std::env::var("OMP_DEFER_REPROBE").is_err() {
+                self.run_auto_reprobe(&mut idx)?
+            } else {
+                Vec::new()
+            };
 
         // Start from HEAD's tree (or empty).
         let mut root: Option<Hash> = self.head_tree()?;
@@ -1323,19 +1293,13 @@ impl Repo {
                 }
                 StagedKind::Delete => {
                     if let Some(r) = root {
-                        root = paths::delete_at_with_key(
-                            &self.store,
-                            &r,
-                            &change.path,
-                            path_key,
-                        )?;
+                        root = paths::delete_at_with_key(&self.store, &r, &change.path, path_key)?;
                     }
                 }
             }
         }
 
-        let root_hash =
-            root.ok_or_else(|| OmpError::Conflict("commit would be empty".into()))?;
+        let root_hash = root.ok_or_else(|| OmpError::Conflict("commit would be empty".into()))?;
 
         let parents = self.head_commit()?.into_iter().collect();
         let commit = Commit {
@@ -1415,13 +1379,12 @@ impl Repo {
 
         for (file_type, new_schema_hash) in staged_schemas {
             // Parse the staged schema.
-            let (_, new_schema_bytes) =
-                self.store.get(&new_schema_hash)?.ok_or_else(|| {
-                    OmpError::internal(format!(
-                        "staged schema blob {} missing from store",
-                        new_schema_hash.hex()
-                    ))
-                })?;
+            let (_, new_schema_bytes) = self.store.get(&new_schema_hash)?.ok_or_else(|| {
+                OmpError::internal(format!(
+                    "staged schema blob {} missing from store",
+                    new_schema_hash.hex()
+                ))
+            })?;
             let new_schema = Schema::parse(&new_schema_bytes, &file_type)?;
 
             // Skip if the schema is unchanged from HEAD.
@@ -1532,10 +1495,8 @@ impl Repo {
     ) -> Result<Hash> {
         // Read the source bytes. v1 plaintext only — encrypted tenants are
         // already excluded.
-        let (src_ty, source_bytes) = self
-            .store
-            .get(&old_manifest.source_hash)?
-            .ok_or_else(|| {
+        let (src_ty, source_bytes) =
+            self.store.get(&old_manifest.source_hash)?.ok_or_else(|| {
                 OmpError::NotFound(format!(
                     "source blob {} for {path} missing",
                     old_manifest.source_hash.hex()
@@ -1612,7 +1573,9 @@ impl Repo {
                 continue;
             }
             if let crate::schema::Source::Probe { probe, args } = &new_field.source {
-                let Some(loaded) = probes.get(probe) else { continue };
+                let Some(loaded) = probes.get(probe) else {
+                    continue;
+                };
                 let mut effective = args.clone();
                 effective
                     .entry("path".to_string())
@@ -1648,15 +1611,13 @@ impl Repo {
         debug_assert_eq!(manifest.schema_hash, new_schema_hash);
 
         let bytes = manifest.serialize()?;
-        let new_hash = self.store.put(crate::object::ObjectType::Manifest.as_str(), &bytes)?;
+        let new_hash = self
+            .store
+            .put(crate::object::ObjectType::Manifest.as_str(), &bytes)?;
         Ok(new_hash)
     }
 
-    pub fn log_commits(
-        &self,
-        path: Option<&str>,
-        max: usize,
-    ) -> Result<Vec<CommitView>> {
+    pub fn log_commits(&self, path: Option<&str>, max: usize) -> Result<Vec<CommitView>> {
         let _ = path; // v1: no path filtering.
         let head = match refs::resolve_head(&self.store)? {
             Some(h) => h,
@@ -1677,12 +1638,7 @@ impl Repo {
             .collect())
     }
 
-    pub fn diff(
-        &self,
-        from: &str,
-        to: &str,
-        path_filter: Option<&str>,
-    ) -> Result<Vec<DiffEntry>> {
+    pub fn diff(&self, from: &str, to: &str, path_filter: Option<&str>) -> Result<Vec<DiffEntry>> {
         let from_commit = refs::resolve_ref(&self.store, from)?;
         let to_commit = refs::resolve_ref(&self.store, to)?;
         let from_tree = self.commit_tree(from_commit)?;
@@ -1916,10 +1872,12 @@ impl Repo {
         let effective_at = cursor_commit.clone().or(resolved_at);
         let tree_root = match self.root_tree(effective_at.as_deref())? {
             Some(r) => r,
-            None => return Ok(crate::query::QueryResult {
-                matches: Vec::new(),
-                next_cursor: None,
-            }),
+            None => {
+                return Ok(crate::query::QueryResult {
+                    matches: Vec::new(),
+                    next_cursor: None,
+                })
+            }
         };
 
         let entries = paths::walk(&self.store, &tree_root)?;
@@ -1968,9 +1926,8 @@ impl Repo {
             }
         }
 
-        let next_cursor = next_offset.map(|off| {
-            crate::query::encode_cursor(effective_at.as_deref(), off)
-        });
+        let next_cursor =
+            next_offset.map(|off| crate::query::encode_cursor(effective_at.as_deref(), off));
 
         Ok(crate::query::QueryResult {
             matches,
@@ -2009,7 +1966,9 @@ impl Repo {
         if at.is_none() {
             let schemas_dir = self.root.join("schemas");
             if schemas_dir.is_dir() {
-                for entry in fs::read_dir(&schemas_dir).map_err(|e| OmpError::io(&schemas_dir, e))? {
+                for entry in
+                    fs::read_dir(&schemas_dir).map_err(|e| OmpError::io(&schemas_dir, e))?
+                {
                     let entry = entry.map_err(|e| OmpError::io(&schemas_dir, e))?;
                     let p = entry.path();
                     if p.extension().and_then(|s| s.to_str()) != Some("schema") {
@@ -2091,21 +2050,17 @@ impl Repo {
         let (schema, schema_bytes) = if let Some(proposed) = proposed_schema_bytes {
             // The schema's own `file_type` field is authoritative; parse twice
             // if needed so we can pass it in as the expected filename stem.
-            let peek_str = std::str::from_utf8(proposed).map_err(|_| {
-                OmpError::SchemaValidation("proposed schema not UTF-8".into())
-            })?;
-            let peek: toml::Value = toml::from_str(peek_str).map_err(|e| {
-                OmpError::SchemaValidation(format!("proposed schema TOML: {e}"))
-            })?;
+            let peek_str = std::str::from_utf8(proposed)
+                .map_err(|_| OmpError::SchemaValidation("proposed schema not UTF-8".into()))?;
+            let peek: toml::Value = toml::from_str(peek_str)
+                .map_err(|e| OmpError::SchemaValidation(format!("proposed schema TOML: {e}")))?;
             let stem = peek
                 .get("file_type")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .or_else(|| file_type_override.map(str::to_string))
                 .ok_or_else(|| {
-                    OmpError::SchemaValidation(
-                        "proposed schema lacks `file_type`".into(),
-                    )
+                    OmpError::SchemaValidation("proposed schema lacks `file_type`".into())
                 })?;
             let parsed = Schema::parse(proposed, &stem)?;
             (parsed, proposed.to_vec())
@@ -2235,10 +2190,7 @@ impl Repo {
         self.current_repo_config_with_key(None)
     }
 
-    fn current_repo_config_with_key(
-        &self,
-        path_key: Option<&[u8; 32]>,
-    ) -> Result<RepoConfig> {
+    fn current_repo_config_with_key(&self, path_key: Option<&[u8; 32]>) -> Result<RepoConfig> {
         // Prefer HEAD's omp.toml; fall back to filesystem; fall back to default.
         if let Some(root) = self.head_tree()? {
             if let Some((Mode::Blob, h)) =
@@ -2276,7 +2228,9 @@ impl Repo {
         // commit still sees the starter schemas dropped by `init`.
         let fs_path = self.root.join(&path);
         if fs_path.exists() {
-            return Ok(Some(fs::read(&fs_path).map_err(|e| OmpError::io(&fs_path, e))?));
+            return Ok(Some(
+                fs::read(&fs_path).map_err(|e| OmpError::io(&fs_path, e))?,
+            ));
         }
         Ok(None)
     }
@@ -2333,8 +2287,7 @@ impl Repo {
         let mut out: HashMap<String, ProbeBlob<'static>> = HashMap::new();
         for probe in STARTER_PROBES {
             let framed_hash = hash_of(ObjectType::Blob, probe.wasm);
-            let manifest =
-                crate::probes::ProbeManifest::parse(probe.manifest_toml)?;
+            let manifest = crate::probes::ProbeManifest::parse(probe.manifest_toml)?;
             out.insert(
                 probe.name.to_string(),
                 ProbeBlob {
@@ -2400,13 +2353,12 @@ impl Repo {
                         hash.hex()
                     ))
                 })?;
-                let (_, manifest_bytes) =
-                    self.store.get(&manifest_hash)?.ok_or_else(|| {
-                        OmpError::Corrupt(format!(
-                            "probe.toml blob {} listed in tree but missing from store",
-                            manifest_hash.hex()
-                        ))
-                    })?;
+                let (_, manifest_bytes) = self.store.get(&manifest_hash)?.ok_or_else(|| {
+                    OmpError::Corrupt(format!(
+                        "probe.toml blob {} listed in tree but missing from store",
+                        manifest_hash.hex()
+                    ))
+                })?;
                 let manifest = crate::probes::ProbeManifest::parse(&manifest_bytes)?;
 
                 out.insert(
@@ -2427,8 +2379,7 @@ impl Repo {
         // validation). User-uploaded probes in the tree must be visible here
         // too, otherwise schemas referencing them would be rejected at
         // validation despite the engine knowing how to run them.
-        let mut out: HashSet<String> =
-            STARTER_PROBES.iter().map(|p| p.name.to_string()).collect();
+        let mut out: HashSet<String> = STARTER_PROBES.iter().map(|p| p.name.to_string()).collect();
         if let Some(tree_root) = self.root_tree(None)? {
             let entries = match paths::walk(&self.store, &tree_root) {
                 Ok(e) => e,
@@ -2538,8 +2489,7 @@ impl Repo {
             return Ok(Index::default());
         }
         let s = fs::read_to_string(&p).map_err(|e| OmpError::io(&p, e))?;
-        serde_json::from_str(&s)
-            .map_err(|e| OmpError::Corrupt(format!("index.json: {e}")))
+        serde_json::from_str(&s).map_err(|e| OmpError::Corrupt(format!("index.json: {e}")))
     }
 
     fn save_index(&self, idx: &Index) -> Result<()> {
@@ -2596,7 +2546,9 @@ fn looks_like_text(bytes: &[u8]) -> bool {
     }
     let printable = sample
         .iter()
-        .filter(|&&b| b == b'\n' || b == b'\r' || b == b'\t' || (b >= 0x20 && b < 0x7F) || b >= 0x80)
+        .filter(|&&b| {
+            b == b'\n' || b == b'\r' || b == b'\t' || (b >= 0x20 && b < 0x7F) || b >= 0x80
+        })
         .count();
     printable * 100 / sample.len() >= 95
 }

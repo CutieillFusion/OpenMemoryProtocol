@@ -136,10 +136,18 @@ impl FieldType {
 /// A single source within a field declaration. The closed set of four sources.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Source {
-    Constant { value: FieldValue },
-    Probe { probe: String, args: BTreeMap<String, FieldValue> },
+    Constant {
+        value: FieldValue,
+    },
+    Probe {
+        probe: String,
+        args: BTreeMap<String, FieldValue>,
+    },
     UserProvided,
-    Field { from: String, transform: Transform },
+    Field {
+        from: String,
+        transform: Transform,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -367,10 +375,7 @@ fn heuristic_render_kind(mime_pattern: &str) -> RenderKind {
     RenderKind::Binary
 }
 
-fn validate_probe_refs_inner(
-    f: &Field,
-    probes: &HashSet<String>,
-) -> Result<()> {
+fn validate_probe_refs_inner(f: &Field, probes: &HashSet<String>) -> Result<()> {
     match &f.source {
         Source::Probe { probe, .. } => {
             if !probes.contains(probe) {
@@ -461,29 +466,22 @@ fn convert_field_with_inherited_type(
 ) -> Result<Field> {
     let ty = match raw.r#type.as_deref() {
         Some(s) => FieldType::parse(s)?,
-        None => inherited.ok_or_else(|| {
-            OmpError::SchemaValidation(format!("field {name:?}: missing `type`"))
-        })?,
+        None => inherited
+            .ok_or_else(|| OmpError::SchemaValidation(format!("field {name:?}: missing `type`")))?,
     };
     let source = match raw.source.as_str() {
         "constant" => {
-            let v = raw
-                .value
-                .as_ref()
-                .ok_or_else(|| {
-                    OmpError::SchemaValidation(format!("field {name:?}: `constant` needs `value`"))
-                })?;
+            let v = raw.value.as_ref().ok_or_else(|| {
+                OmpError::SchemaValidation(format!("field {name:?}: `constant` needs `value`"))
+            })?;
             Source::Constant {
                 value: toml_value_to_field(v)?,
             }
         }
         "probe" => {
-            let probe = raw
-                .probe
-                .clone()
-                .ok_or_else(|| {
-                    OmpError::SchemaValidation(format!("field {name:?}: `probe` needs `probe`"))
-                })?;
+            let probe = raw.probe.clone().ok_or_else(|| {
+                OmpError::SchemaValidation(format!("field {name:?}: `probe` needs `probe`"))
+            })?;
             let mut args = BTreeMap::new();
             if let Some(a) = &raw.args {
                 for (k, v) in a {
@@ -494,12 +492,9 @@ fn convert_field_with_inherited_type(
         }
         "user_provided" => Source::UserProvided,
         "field" => {
-            let from = raw
-                .from
-                .clone()
-                .ok_or_else(|| {
-                    OmpError::SchemaValidation(format!("field {name:?}: `field` needs `from`"))
-                })?;
+            let from = raw.from.clone().ok_or_else(|| {
+                OmpError::SchemaValidation(format!("field {name:?}: `field` needs `from`"))
+            })?;
             let transform = Transform::parse(raw.transform.as_deref().unwrap_or(""))?;
             Source::Field { from, transform }
         }

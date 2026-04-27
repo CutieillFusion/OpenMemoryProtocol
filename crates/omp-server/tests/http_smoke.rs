@@ -33,12 +33,15 @@ async fn status_and_tree_routes_respond() {
         .unwrap();
     assert_eq!(status.status(), 200);
     let body: serde_json::Value = status.json().await.unwrap();
-    assert!(body.get("staged").is_some(), "status body missing staged: {body}");
+    assert!(
+        body.get("staged").is_some(),
+        "status body missing staged: {body}"
+    );
 }
 
 fn stage_all(repo: &Repo, root: &std::path::Path) {
-    let entries = omp_core::walker::walk_repo(root, &omp_core::walker::WalkOptions::default())
-        .unwrap();
+    let entries =
+        omp_core::walker::walk_repo(root, &omp_core::walker::WalkOptions::default()).unwrap();
     for e in entries {
         let bytes = std::fs::read(&e.fs_path).unwrap();
         repo.add(&e.repo_path, &bytes, None, None).unwrap();

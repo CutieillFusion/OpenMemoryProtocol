@@ -103,12 +103,8 @@ mod tests {
     fn recipient_for_finds_match() {
         let body = fixture();
         let bob = TenantId::new("bob").unwrap();
-        assert_eq!(
-            body.recipient_for(&bob).unwrap().wrapped_key,
-            "deadbeef"
-        );
+        assert_eq!(body.recipient_for(&bob).unwrap().wrapped_key, "deadbeef");
         let dave = TenantId::new("dave").unwrap();
         assert!(body.recipient_for(&dave).is_none());
     }
-
 }

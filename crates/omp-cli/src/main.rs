@@ -322,7 +322,10 @@ fn run() -> Result<()> {
         Command::Status => {
             let repo = Repo::open(&repo_root)?;
             let status = repo.status()?;
-            println!("branch: {}", status.branch.unwrap_or_else(|| "(none)".into()));
+            println!(
+                "branch: {}",
+                status.branch.unwrap_or_else(|| "(none)".into())
+            );
             println!(
                 "HEAD:   {}",
                 status
@@ -371,7 +374,11 @@ fn run() -> Result<()> {
             use std::io::Write as _;
             std::io::stdout().write_all(&bytes)?;
         }
-        Command::Ls { path, at, recursive } => {
+        Command::Ls {
+            path,
+            at,
+            recursive,
+        } => {
             let repo = Repo::open(&repo_root)?;
             let entries = repo.ls(&path, at.as_deref(), recursive)?;
             for e in entries {
@@ -481,7 +488,9 @@ fn run() -> Result<()> {
                 fields.insert(k, v);
             }
             let proposed = match proposed_schema {
-                Some(p) => Some(std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?),
+                Some(p) => {
+                    Some(std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?)
+                }
                 None => None,
             };
             let m = repo.test_ingest(&path, &bytes, Some(fields), proposed.as_deref())?;
@@ -527,15 +536,14 @@ fn unlock_with_identity(
     tenant_id: &str,
     passphrase: Option<String>,
 ) -> Result<TenantKeys> {
-    let tenant = TenantId::new(tenant_id)
-        .map_err(|e| anyhow::anyhow!("invalid tenant id: {e}"))?;
+    let tenant = TenantId::new(tenant_id).map_err(|e| anyhow::anyhow!("invalid tenant id: {e}"))?;
     let pass = get_passphrase(passphrase)?;
-    let mut keys = TenantKeys::unlock(&pass, &tenant)
-        .map_err(|e| anyhow::anyhow!("unlock: {e}"))?;
+    let mut keys =
+        TenantKeys::unlock(&pass, &tenant).map_err(|e| anyhow::anyhow!("unlock: {e}"))?;
     let id_path = identity_path(repo_root);
     if id_path.exists() {
-        let sealed = std::fs::read(&id_path)
-            .with_context(|| format!("read {}", id_path.display()))?;
+        let sealed =
+            std::fs::read(&id_path).with_context(|| format!("read {}", id_path.display()))?;
         keys.unseal_and_attach_identity(&sealed)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
     }
@@ -549,8 +557,8 @@ fn handle_enc(repo_root: &Path, cmd: EncCommand) -> Result<()> {
             if !repo_root.join(".omp").exists() {
                 Repo::init(repo_root)?;
             }
-            let tenant_id = TenantId::new(&tenant)
-                .map_err(|e| anyhow::anyhow!("invalid tenant id: {e}"))?;
+            let tenant_id =
+                TenantId::new(&tenant).map_err(|e| anyhow::anyhow!("invalid tenant id: {e}"))?;
             let pass = get_passphrase(passphrase)?;
             let mut keys = TenantKeys::unlock(&pass, &tenant_id)
                 .map_err(|e| anyhow::anyhow!("unlock: {e}"))?;
@@ -570,9 +578,7 @@ fn handle_enc(repo_root: &Path, cmd: EncCommand) -> Result<()> {
             println!("tenant_id:     {tenant}");
             println!("identity_pub:  {}", omp_core::hex::encode(&pubkey));
             println!("identity file: {}", id_path.display());
-            println!(
-                "NOTE: passphrase loss is unrecoverable by design (doc 13 §Threat model)."
-            );
+            println!("NOTE: passphrase loss is unrecoverable by design (doc 13 §Threat model).");
         }
         EncCommand::Add {
             path,
@@ -591,13 +597,8 @@ fn handle_enc(repo_root: &Path, cmd: EncCommand) -> Result<()> {
             for (k, v) in field {
                 fields.insert(k, v);
             }
-            let res = repo.add_encrypted(
-                &path,
-                &bytes,
-                Some(fields),
-                file_type.as_deref(),
-                &keys,
-            )?;
+            let res =
+                repo.add_encrypted(&path, &bytes, Some(fields), file_type.as_deref(), &keys)?;
             println!("{}", serde_json::to_string_pretty(&res)?);
         }
         EncCommand::Show {
@@ -650,8 +651,7 @@ fn parse_recipient(spec: &str) -> Result<(TenantId, [u8; 32])> {
     if hex.len() != 64 {
         bail!("hex_pubkey must be 64 chars (32 bytes), got {}", hex.len());
     }
-    let bytes = omp_core::hex::decode(hex)
-        .map_err(|e| anyhow::anyhow!("bad hex: {e}"))?;
+    let bytes = omp_core::hex::decode(hex).map_err(|e| anyhow::anyhow!("bad hex: {e}"))?;
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);
     let tenant = TenantId::new(tid).map_err(|e| anyhow::anyhow!("invalid tenant: {e}"))?;
@@ -690,10 +690,7 @@ fn handle_share(repo_root: &Path, cmd: ShareCommand) -> Result<()> {
             let share_hash = repo.revoke_share(&path, &keys, &recipients)?;
             println!("{}", share_hash.hex());
         }
-        ShareCommand::Pubkey {
-            tenant,
-            passphrase,
-        } => {
+        ShareCommand::Pubkey { tenant, passphrase } => {
             let keys = unlock_with_identity(repo_root, &tenant, passphrase)?;
             match keys.identity() {
                 Some(id) => println!("{}", omp_core::hex::encode(&id.pub_key)),
@@ -796,10 +793,7 @@ fn handle_tenant(cmd: TenantCommand) -> Result<()> {
     Ok(())
 }
 
-fn registry_path(
-    explicit: Option<PathBuf>,
-    tenants_base: Option<PathBuf>,
-) -> Result<PathBuf> {
+fn registry_path(explicit: Option<PathBuf>, tenants_base: Option<PathBuf>) -> Result<PathBuf> {
     if let Some(p) = explicit {
         return Ok(p);
     }
@@ -853,16 +847,16 @@ fn print_manifest(m: &omp_core::manifest::Manifest, verbose: bool) -> Result<()>
     Ok(())
 }
 
-fn print_show_result(
-    r: &omp_core::api::ShowResult,
-    verbose: bool,
-) -> Result<()> {
+fn print_show_result(r: &omp_core::api::ShowResult, verbose: bool) -> Result<()> {
     let mut v = serde_json::to_value(r)?;
     if !verbose {
         // ShowResult is an enum serialized with a `kind` tag. Strip hashes
         // inside whichever variant is present.
         if let Some(obj) = v.as_object_mut() {
-            let kind = obj.get("kind").and_then(|k| k.as_str()).map(|s| s.to_string());
+            let kind = obj
+                .get("kind")
+                .and_then(|k| k.as_str())
+                .map(|s| s.to_string());
             match kind.as_deref() {
                 Some("manifest") => {
                     if let Some(inner) = obj.get_mut("manifest") {

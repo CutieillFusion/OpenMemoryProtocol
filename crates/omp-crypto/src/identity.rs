@@ -62,10 +62,7 @@ pub fn generate_identity() -> (IdentityPrivate, [u8; 32]) {
 ///
 /// The returned blob is self-describing (includes the ephemeral public key
 /// the recipient needs for ECDH); callers embed it in a `share` object.
-pub fn wrap_to_recipient(
-    content_key: &[u8; 32],
-    recipient_pub: &[u8; 32],
-) -> Result<Vec<u8>> {
+pub fn wrap_to_recipient(content_key: &[u8; 32], recipient_pub: &[u8; 32]) -> Result<Vec<u8>> {
     let mut eph_bytes = [0u8; 32];
     OsRng.fill_bytes(&mut eph_bytes);
     let eph_secret = StaticSecret::from(eph_bytes);
@@ -99,10 +96,7 @@ pub fn wrap_to_recipient(
 
 /// Recover the content key from a wrapped-key blob using the recipient's
 /// identity private key.
-pub fn unwrap_from_stanza(
-    wrapped: &[u8],
-    recipient_priv: &IdentityPrivate,
-) -> Result<[u8; 32]> {
+pub fn unwrap_from_stanza(wrapped: &[u8], recipient_priv: &IdentityPrivate) -> Result<[u8; 32]> {
     if wrapped.len() < 1 + 32 {
         return Err(CryptoError::Invalid(format!(
             "wrapped-key blob too short: {}",

@@ -29,14 +29,12 @@ struct Args {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
     let args = Args::parse();
-    let config =
-        GatewayConfig::from_toml_path(&args.config).context("loading gateway config")?;
+    let config = GatewayConfig::from_toml_path(&args.config).context("loading gateway config")?;
 
     let signer = if let Some(p) = args.signing_key {
         let seed = std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?;

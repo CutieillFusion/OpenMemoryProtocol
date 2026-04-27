@@ -106,7 +106,10 @@ async fn watch_sse_streams_commit_created() {
             match tokio::time::timeout(remaining, resp.chunk()).await {
                 Ok(Ok(Some(chunk))) => {
                     buf.extend_from_slice(&chunk);
-                    if std::str::from_utf8(&buf).unwrap_or("").contains("commit.created") {
+                    if std::str::from_utf8(&buf)
+                        .unwrap_or("")
+                        .contains("commit.created")
+                    {
                         break;
                     }
                 }

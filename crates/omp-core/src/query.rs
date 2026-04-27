@@ -79,7 +79,10 @@ pub enum QueryError {
 
 pub fn parse(input: &str) -> Result<Expr, QueryError> {
     let tokens = tokenize(input)?;
-    let mut p = Parser { tokens: &tokens, pos: 0 };
+    let mut p = Parser {
+        tokens: &tokens,
+        pos: 0,
+    };
     let expr = p.parse_expr()?;
     if p.pos < p.tokens.len() {
         let tok = &p.tokens[p.pos];
@@ -129,28 +132,46 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
         }
         match c {
             b'(' => {
-                out.push(Token { kind: Tok::LParen, byte_pos: start });
+                out.push(Token {
+                    kind: Tok::LParen,
+                    byte_pos: start,
+                });
                 i += 1;
             }
             b')' => {
-                out.push(Token { kind: Tok::RParen, byte_pos: start });
+                out.push(Token {
+                    kind: Tok::RParen,
+                    byte_pos: start,
+                });
                 i += 1;
             }
             b'.' => {
-                out.push(Token { kind: Tok::Dot, byte_pos: start });
+                out.push(Token {
+                    kind: Tok::Dot,
+                    byte_pos: start,
+                });
                 i += 1;
             }
             b',' => {
-                out.push(Token { kind: Tok::Comma, byte_pos: start });
+                out.push(Token {
+                    kind: Tok::Comma,
+                    byte_pos: start,
+                });
                 i += 1;
             }
             b'=' => {
-                out.push(Token { kind: Tok::Op(Op::Eq), byte_pos: start });
+                out.push(Token {
+                    kind: Tok::Op(Op::Eq),
+                    byte_pos: start,
+                });
                 i += 1;
             }
             b'!' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    out.push(Token { kind: Tok::Op(Op::Ne), byte_pos: start });
+                    out.push(Token {
+                        kind: Tok::Op(Op::Ne),
+                        byte_pos: start,
+                    });
                     i += 2;
                 } else {
                     return Err(QueryError::Parse {
@@ -161,19 +182,31 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
             }
             b'<' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    out.push(Token { kind: Tok::Op(Op::Le), byte_pos: start });
+                    out.push(Token {
+                        kind: Tok::Op(Op::Le),
+                        byte_pos: start,
+                    });
                     i += 2;
                 } else {
-                    out.push(Token { kind: Tok::Op(Op::Lt), byte_pos: start });
+                    out.push(Token {
+                        kind: Tok::Op(Op::Lt),
+                        byte_pos: start,
+                    });
                     i += 1;
                 }
             }
             b'>' => {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
-                    out.push(Token { kind: Tok::Op(Op::Ge), byte_pos: start });
+                    out.push(Token {
+                        kind: Tok::Op(Op::Ge),
+                        byte_pos: start,
+                    });
                     i += 2;
                 } else {
-                    out.push(Token { kind: Tok::Op(Op::Gt), byte_pos: start });
+                    out.push(Token {
+                        kind: Tok::Op(Op::Gt),
+                        byte_pos: start,
+                    });
                     i += 1;
                 }
             }
@@ -198,7 +231,10 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
                     });
                 }
                 i += 1; // consume closing quote
-                out.push(Token { kind: Tok::Str(buf), byte_pos: start });
+                out.push(Token {
+                    kind: Tok::Str(buf),
+                    byte_pos: start,
+                });
             }
             c if c.is_ascii_digit() || c == b'-' => {
                 let mut j = i;
@@ -206,9 +242,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
                     j += 1;
                 }
                 let mut saw_dot = false;
-                while j < bytes.len()
-                    && (bytes[j].is_ascii_digit() || bytes[j] == b'.')
-                {
+                while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
                     if bytes[j] == b'.' {
                         // peek ahead: if next char is a digit, we're inside a
                         // float; otherwise this dot belongs to a field path
@@ -229,13 +263,19 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
                         pos: i,
                         msg: format!("bad float literal: {num}"),
                     })?;
-                    out.push(Token { kind: Tok::Float(f), byte_pos: start });
+                    out.push(Token {
+                        kind: Tok::Float(f),
+                        byte_pos: start,
+                    });
                 } else {
                     let n: i64 = num.parse().map_err(|_| QueryError::Parse {
                         pos: i,
                         msg: format!("bad int literal: {num}"),
                     })?;
-                    out.push(Token { kind: Tok::Int(n), byte_pos: start });
+                    out.push(Token {
+                        kind: Tok::Int(n),
+                        byte_pos: start,
+                    });
                 }
                 i = j;
             }
@@ -257,7 +297,10 @@ fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
                     "starts_with" => Tok::Op(Op::StartsWith),
                     _ => Tok::Ident(word.to_string()),
                 };
-                out.push(Token { kind, byte_pos: start });
+                out.push(Token {
+                    kind,
+                    byte_pos: start,
+                });
                 i = j;
             }
             _ => {
@@ -369,7 +412,9 @@ impl<'a> Parser<'a> {
         // Otherwise: <field-path> <op> <literal>
         let path = self.parse_field_path()?;
         let op = match self.advance() {
-            Some(Token { kind: Tok::Op(o), .. }) => *o,
+            Some(Token {
+                kind: Tok::Op(o), ..
+            }) => *o,
             Some(t) => {
                 return Err(QueryError::Parse {
                     pos: t.byte_pos,
@@ -393,7 +438,10 @@ impl<'a> Parser<'a> {
 
     fn parse_field_path(&mut self) -> Result<FieldPath, QueryError> {
         let first = match self.advance() {
-            Some(Token { kind: Tok::Ident(s), .. }) => s.clone(),
+            Some(Token {
+                kind: Tok::Ident(s),
+                ..
+            }) => s.clone(),
             Some(t) => {
                 return Err(QueryError::Parse {
                     pos: t.byte_pos,
@@ -411,7 +459,10 @@ impl<'a> Parser<'a> {
         while matches!(self.peek(), Some(Tok::Dot)) {
             self.advance();
             match self.advance() {
-                Some(Token { kind: Tok::Ident(s), .. }) => path.push(s.clone()),
+                Some(Token {
+                    kind: Tok::Ident(s),
+                    ..
+                }) => path.push(s.clone()),
                 Some(t) => {
                     return Err(QueryError::Parse {
                         pos: t.byte_pos,
@@ -431,11 +482,22 @@ impl<'a> Parser<'a> {
 
     fn parse_literal(&mut self) -> Result<Literal, QueryError> {
         match self.advance() {
-            Some(Token { kind: Tok::Str(s), .. }) => Ok(Literal::String(s.clone())),
-            Some(Token { kind: Tok::Int(n), .. }) => Ok(Literal::Int(*n)),
-            Some(Token { kind: Tok::Float(f), .. }) => Ok(Literal::Float(*f)),
-            Some(Token { kind: Tok::Bool(b), .. }) => Ok(Literal::Bool(*b)),
-            Some(Token { kind: Tok::Null, .. }) => Ok(Literal::Null),
+            Some(Token {
+                kind: Tok::Str(s), ..
+            }) => Ok(Literal::String(s.clone())),
+            Some(Token {
+                kind: Tok::Int(n), ..
+            }) => Ok(Literal::Int(*n)),
+            Some(Token {
+                kind: Tok::Float(f),
+                ..
+            }) => Ok(Literal::Float(*f)),
+            Some(Token {
+                kind: Tok::Bool(b), ..
+            }) => Ok(Literal::Bool(*b)),
+            Some(Token {
+                kind: Tok::Null, ..
+            }) => Ok(Literal::Null),
             Some(t) => Err(QueryError::Parse {
                 pos: t.byte_pos,
                 msg: format!("expected literal, got {:?}", t.kind),
@@ -521,11 +583,21 @@ pub fn resolve_path<'m>(manifest: &'m Manifest, path: &[String]) -> Option<Resol
     let rest = &path[1..];
 
     let top = match head.as_str() {
-        "file_type" => Some(ResolvedValue::Owned(FieldValue::String(manifest.file_type.clone()))),
-        "source_hash" => Some(ResolvedValue::Owned(FieldValue::String(manifest.source_hash.hex()))),
-        "schema_hash" => Some(ResolvedValue::Owned(FieldValue::String(manifest.schema_hash.hex()))),
-        "ingested_at" => Some(ResolvedValue::Owned(FieldValue::String(manifest.ingested_at.clone()))),
-        "ingester_version" => Some(ResolvedValue::Owned(FieldValue::String(manifest.ingester_version.clone()))),
+        "file_type" => Some(ResolvedValue::Owned(FieldValue::String(
+            manifest.file_type.clone(),
+        ))),
+        "source_hash" => Some(ResolvedValue::Owned(FieldValue::String(
+            manifest.source_hash.hex(),
+        ))),
+        "schema_hash" => Some(ResolvedValue::Owned(FieldValue::String(
+            manifest.schema_hash.hex(),
+        ))),
+        "ingested_at" => Some(ResolvedValue::Owned(FieldValue::String(
+            manifest.ingested_at.clone(),
+        ))),
+        "ingester_version" => Some(ResolvedValue::Owned(FieldValue::String(
+            manifest.ingester_version.clone(),
+        ))),
         "fields" => {
             // Explicit `fields.<name>` form.
             return descend_fields(&manifest.fields, rest);
@@ -602,12 +674,10 @@ pub fn evaluate(expr: &Expr, manifest: &Manifest) -> bool {
         Expr::Or(a, b) => evaluate(a, manifest) || evaluate(b, manifest),
         Expr::Not(a) => !evaluate(a, manifest),
         Expr::Atom(Atom::Exists(path)) => resolve_path(manifest, path).is_some(),
-        Expr::Atom(Atom::Compare { path, op, value }) => {
-            match resolve_path(manifest, path) {
-                Some(r) => compare(r.as_field(), *op, value),
-                None => false,
-            }
-        }
+        Expr::Atom(Atom::Compare { path, op, value }) => match resolve_path(manifest, path) {
+            Some(r) => compare(r.as_field(), *op, value),
+            None => false,
+        },
     }
 }
 
@@ -713,7 +783,9 @@ mod tests {
     #[test]
     fn tokenize_starts_with() {
         let toks = tokenize("author starts_with \"A\"").unwrap();
-        assert!(toks.iter().any(|t| matches!(t.kind, Tok::Op(Op::StartsWith))));
+        assert!(toks
+            .iter()
+            .any(|t| matches!(t.kind, Tok::Op(Op::StartsWith))));
     }
 
     #[test]
@@ -739,16 +811,14 @@ mod tests {
 
     #[test]
     fn parse_and_or_precedence() {
-        let e = parse("file_type = \"pdf\" AND pages > 10 OR tags contains \"draft\"")
-            .unwrap();
+        let e = parse("file_type = \"pdf\" AND pages > 10 OR tags contains \"draft\"").unwrap();
         // OR is the outermost binder.
         assert!(matches!(e, Expr::Or(..)));
     }
 
     #[test]
     fn parse_parens_override() {
-        let e = parse("file_type = \"pdf\" AND (pages > 10 OR tags contains \"draft\")")
-            .unwrap();
+        let e = parse("file_type = \"pdf\" AND (pages > 10 OR tags contains \"draft\")").unwrap();
         // Now AND is outermost.
         assert!(matches!(e, Expr::And(..)));
     }
@@ -811,8 +881,14 @@ mod tests {
 
     #[test]
     fn eval_starts_with_and_contains_string() {
-        let m = m_with_fields("pdf", vec![("author", FieldValue::String("Alice Smith".into()))]);
-        assert!(evaluate(&parse("author starts_with \"Alice\"").unwrap(), &m));
+        let m = m_with_fields(
+            "pdf",
+            vec![("author", FieldValue::String("Alice Smith".into()))],
+        );
+        assert!(evaluate(
+            &parse("author starts_with \"Alice\"").unwrap(),
+            &m
+        ));
         assert!(evaluate(&parse("author contains \"Smith\"").unwrap(), &m));
         assert!(!evaluate(&parse("author starts_with \"Bob\"").unwrap(), &m));
     }
@@ -832,7 +908,10 @@ mod tests {
             "pdf",
             vec![
                 ("pages", FieldValue::Int(50)),
-                ("tags", FieldValue::List(vec![FieldValue::String("policy".into())])),
+                (
+                    "tags",
+                    FieldValue::List(vec![FieldValue::String("policy".into())]),
+                ),
             ],
         );
         assert!(evaluate(
@@ -847,10 +926,7 @@ mod tests {
             &parse("file_type = \"text\" OR pages > 10").unwrap(),
             &m
         ));
-        assert!(evaluate(
-            &parse("NOT (pages < 10)").unwrap(),
-            &m
-        ));
+        assert!(evaluate(&parse("NOT (pages < 10)").unwrap(), &m));
     }
 
     #[test]
@@ -866,7 +942,10 @@ mod tests {
         nested.insert("name".into(), FieldValue::String("Alice".into()));
         let m = m_with_fields("pdf", vec![("author", FieldValue::Object(nested))]);
         assert!(evaluate(&parse("author.name = \"Alice\"").unwrap(), &m));
-        assert!(evaluate(&parse("fields.author.name = \"Alice\"").unwrap(), &m));
+        assert!(evaluate(
+            &parse("fields.author.name = \"Alice\"").unwrap(),
+            &m
+        ));
         assert!(!evaluate(&parse("author.name = \"Bob\"").unwrap(), &m));
     }
 

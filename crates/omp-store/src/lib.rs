@@ -18,10 +18,10 @@ use std::sync::Arc;
 use omp_core::hash::Hash;
 use omp_core::store::ObjectStore;
 use omp_proto::store::v1::{
-    store_server::Store, DeleteRefRequest, DeleteRefResponse, GetRequest, GetResponse,
-    HasRequest, HasResponse, IterRefsItem, IterRefsRequest, PutRequest, PutResponse,
-    ReadHeadRequest, ReadHeadResponse, ReadRefRequest, ReadRefResponse, WriteHeadRequest,
-    WriteHeadResponse, WriteRefRequest, WriteRefResponse,
+    store_server::Store, DeleteRefRequest, DeleteRefResponse, GetRequest, GetResponse, HasRequest,
+    HasResponse, IterRefsItem, IterRefsRequest, PutRequest, PutResponse, ReadHeadRequest,
+    ReadHeadResponse, ReadRefRequest, ReadRefResponse, WriteHeadRequest, WriteHeadResponse,
+    WriteRefRequest, WriteRefResponse,
 };
 use tonic::{Request, Response, Status};
 
@@ -47,10 +47,7 @@ fn parse_hash(s: &str) -> Result<Hash, Status> {
 
 #[tonic::async_trait]
 impl Store for StoreService {
-    async fn put(
-        &self,
-        req: Request<PutRequest>,
-    ) -> Result<Response<PutResponse>, Status> {
+    async fn put(&self, req: Request<PutRequest>) -> Result<Response<PutResponse>, Status> {
         let req = req.into_inner();
         let inner = self.inner.clone();
         let hash = tokio::task::spawn_blocking(move || inner.put(&req.r#type, &req.content))
@@ -62,10 +59,7 @@ impl Store for StoreService {
         }))
     }
 
-    async fn get(
-        &self,
-        req: Request<GetRequest>,
-    ) -> Result<Response<GetResponse>, Status> {
+    async fn get(&self, req: Request<GetRequest>) -> Result<Response<GetResponse>, Status> {
         let req = req.into_inner();
         let hash = parse_hash(&req.hash)?;
         let inner = self.inner.clone();
@@ -87,10 +81,7 @@ impl Store for StoreService {
         }
     }
 
-    async fn has(
-        &self,
-        req: Request<HasRequest>,
-    ) -> Result<Response<HasResponse>, Status> {
+    async fn has(&self, req: Request<HasRequest>) -> Result<Response<HasResponse>, Status> {
         let req = req.into_inner();
         let hash = parse_hash(&req.hash)?;
         let inner = self.inner.clone();
@@ -161,14 +152,11 @@ impl Store for StoreService {
         // from `self.inner` via the trait object, so we collect into a Vec
         // before constructing the stream.
         let inner = self.inner.clone();
-        let pairs: Vec<(String, Hash)> = tokio::task::spawn_blocking(move || {
-            inner
-                .iter_refs()
-                .map(|it| it.collect::<Vec<_>>())
-        })
-        .await
-        .map_err(map_err)?
-        .map_err(map_err)?;
+        let pairs: Vec<(String, Hash)> =
+            tokio::task::spawn_blocking(move || inner.iter_refs().map(|it| it.collect::<Vec<_>>()))
+                .await
+                .map_err(map_err)?
+                .map_err(map_err)?;
 
         let stream = async_stream::try_stream! {
             for (name, hash) in pairs {

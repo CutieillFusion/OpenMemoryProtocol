@@ -70,10 +70,7 @@ fn encrypted_commit_hides_tree_names_from_server_view() {
     let store = DiskStore::open(td.path()).unwrap();
     let (_ty, commit_body) = store.get(&commit_hash).unwrap().unwrap();
     let commit_str = std::str::from_utf8(&commit_body).unwrap();
-    let tree_line = commit_str
-        .lines()
-        .find(|l| l.starts_with("tree "))
-        .unwrap();
+    let tree_line = commit_str.lines().find(|l| l.starts_with("tree ")).unwrap();
     let tree_hash: omp_core::Hash = tree_line.strip_prefix("tree ").unwrap().parse().unwrap();
 
     // Walk every tree reachable from that root and confirm no plaintext
@@ -318,7 +315,10 @@ fn gc_walker_handles_encrypted_commits_and_manifests() {
         "expected exactly one chunks object in the live set"
     );
     // chunk blobs plus starter-pack probe blobs.
-    assert!(live.blobs.len() >= 4, "chunks should add ≥4 blobs to live set");
+    assert!(
+        live.blobs.len() >= 4,
+        "chunks should add ≥4 blobs to live set"
+    );
 }
 
 #[test]
@@ -359,14 +359,13 @@ fn ls_still_works_on_encrypted_repo() {
     let tree_hash: omp_core::Hash = tree_line.strip_prefix("tree ").unwrap().parse().unwrap();
 
     // With the path_key, we can find the entry for "a.md".
-    let found = omp_core::paths::get_at_with_key(
-        repo.store(),
-        "a.md",
-        &tree_hash,
-        Some(&keys.path_key),
-    )
-    .unwrap();
-    assert!(found.is_some(), "get_at_with_key should resolve the manifest");
+    let found =
+        omp_core::paths::get_at_with_key(repo.store(), "a.md", &tree_hash, Some(&keys.path_key))
+            .unwrap();
+    assert!(
+        found.is_some(),
+        "get_at_with_key should resolve the manifest"
+    );
 
     // Without path_key, tree parsing would fail on the encryption marker.
     let err = omp_core::paths::get_at(repo.store(), "a.md", &tree_hash).unwrap_err();

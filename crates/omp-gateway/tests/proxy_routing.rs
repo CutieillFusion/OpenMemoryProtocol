@@ -84,8 +84,7 @@ async fn routes_alice_and_bob_to_different_shards() {
         .text("path", "alice-only.txt")
         .part(
             "file",
-            reqwest::multipart::Part::bytes(b"hi from alice".to_vec())
-                .file_name("alice-only.txt"),
+            reqwest::multipart::Part::bytes(b"hi from alice".to_vec()).file_name("alice-only.txt"),
         );
     let resp = client
         .post(format!("{gw_url}/files"))
@@ -394,7 +393,10 @@ async fn forwards_sse_responses_as_a_stream() {
         "first SSE chunk arrived after {first_elapsed:?}; gateway is buffering"
     );
     let first_str = std::str::from_utf8(&first).unwrap();
-    assert!(first_str.contains("data: 1"), "first chunk content: {first_str}");
+    assert!(
+        first_str.contains("data: 1"),
+        "first chunk content: {first_str}"
+    );
 
     // Drain the rest and confirm the second event arrives too.
     let mut tail = Vec::new();
@@ -429,7 +431,11 @@ async fn serves_embedded_ui_at_slash_ui() {
         .unwrap();
 
     // GET / → 307 to /ui/.
-    let resp = client.get(format!("http://{gw_addr}/")).send().await.unwrap();
+    let resp = client
+        .get(format!("http://{gw_addr}/"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 307);
     let loc = resp.headers().get("location").unwrap().to_str().unwrap();
     assert_eq!(loc, "/ui/");
@@ -462,7 +468,10 @@ async fn serves_embedded_ui_at_slash_ui() {
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    assert!(ctype.starts_with("text/html"), "deep-link content-type: {ctype}");
+    assert!(
+        ctype.starts_with("text/html"),
+        "deep-link content-type: {ctype}"
+    );
 
     // Missing asset with extension → 404.
     let resp = client
@@ -600,7 +609,10 @@ async fn probes_build_returns_503_when_no_builder_configured() {
 #[tokio::test]
 async fn translates_412_to_409() {
     // Stand up a fake upstream that always returns 412.
-    let app = Router::new().route("/anything", get(|| async { (axum::http::StatusCode::PRECONDITION_FAILED, "no") }));
+    let app = Router::new().route(
+        "/anything",
+        get(|| async { (axum::http::StatusCode::PRECONDITION_FAILED, "no") }),
+    );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream_addr = listener.local_addr().unwrap();
     let upstream_url = format!("http://{upstream_addr}");
@@ -632,5 +644,9 @@ async fn translates_412_to_409() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 409, "412 Precondition Failed should translate to 409 Conflict");
+    assert_eq!(
+        resp.status(),
+        409,
+        "412 Precondition Failed should translate to 409 Conflict"
+    );
 }

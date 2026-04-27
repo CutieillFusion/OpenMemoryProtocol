@@ -240,10 +240,7 @@ mod tests {
 
     fn fixture() -> Manifest {
         let mut probe_hashes = BTreeMap::new();
-        probe_hashes.insert(
-            "file.size".to_string(),
-            Hash::of(b"file.size.wasm"),
-        );
+        probe_hashes.insert("file.size".to_string(), Hash::of(b"file.size.wasm"));
         probe_hashes.insert(
             "pdf.page_count".to_string(),
             Hash::of(b"pdf.page_count.wasm"),
@@ -288,8 +285,7 @@ mod tests {
     #[test]
     fn null_fields_are_omitted() {
         let mut m = fixture();
-        m.fields
-            .insert("summary".to_string(), FieldValue::Null);
+        m.fields.insert("summary".to_string(), FieldValue::Null);
         let bytes = m.serialize().unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();
         assert!(!s.contains("summary"));

@@ -82,10 +82,15 @@ fn encrypted_small_file_roundtrip() {
     let env_str = std::str::from_utf8(&env_bytes).unwrap();
     assert!(!env_str.contains("sealed contents of the user"));
     // file_type shouldn't leak either — it's inside the sealed body.
-    assert!(!env_str.contains("text"), "file_type leaked into envelope: {env_str}");
+    assert!(
+        !env_str.contains("text"),
+        "file_type leaked into envelope: {env_str}"
+    );
 
     // Reading back with the right keys recovers the plaintext + Manifest.
-    let (manifest, recovered) = repo.show_encrypted("secrets/note.txt", None, &keys).unwrap();
+    let (manifest, recovered) = repo
+        .show_encrypted("secrets/note.txt", None, &keys)
+        .unwrap();
     assert_eq!(recovered, plaintext);
     assert_eq!(manifest.file_type, "text");
     assert_eq!(manifest.source_hash, source_hash);
@@ -126,14 +131,8 @@ fn wrong_passphrase_cannot_decrypt() {
 
     let tenant = TenantId::local();
     let right_keys = make_keys(&tenant);
-    repo.add_encrypted(
-        "x.txt",
-        b"secret contents",
-        None,
-        Some("text"),
-        &right_keys,
-    )
-    .unwrap();
+    repo.add_encrypted("x.txt", b"secret contents", None, Some("text"), &right_keys)
+        .unwrap();
     repo.commit(
         "add",
         Some(AuthorOverride {
@@ -168,14 +167,8 @@ fn share_wraps_to_recipient_and_recipient_can_decrypt() {
 
     // Alice ingests a file under her keys.
     let plaintext = b"alice's confidential plan\n".to_vec();
-    repo.add_encrypted(
-        "plans/q3.txt",
-        &plaintext,
-        None,
-        Some("text"),
-        &alice_keys,
-    )
-    .unwrap();
+    repo.add_encrypted("plans/q3.txt", &plaintext, None, Some("text"), &alice_keys)
+        .unwrap();
     repo.commit(
         "alice adds plan",
         Some(AuthorOverride {
@@ -228,14 +221,8 @@ fn share_refuses_non_recipient() {
     let (_bob_priv, bob_pub) = generate_identity();
     let (carol_priv, _carol_pub) = generate_identity();
 
-    repo.add_encrypted(
-        "x.txt",
-        b"private data",
-        None,
-        Some("text"),
-        &alice_keys,
-    )
-    .unwrap();
+    repo.add_encrypted("x.txt", b"private data", None, Some("text"), &alice_keys)
+        .unwrap();
     repo.commit(
         "init",
         Some(AuthorOverride {

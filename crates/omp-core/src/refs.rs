@@ -55,8 +55,7 @@ pub fn resolve_ref(store: &dyn ObjectStore, expr: &str) -> Result<Hash> {
     let (base, back) = split_ancestor(expr);
 
     let start = if base == "HEAD" {
-        resolve_head(store)?
-            .ok_or_else(|| OmpError::NotFound("HEAD has no commits".into()))?
+        resolve_head(store)?.ok_or_else(|| OmpError::NotFound("HEAD has no commits".into()))?
     } else if base.starts_with("refs/") {
         store
             .read_ref(base)?
@@ -109,11 +108,7 @@ fn nth_ancestor(store: &dyn ObjectStore, mut cur: Hash, mut n: usize) -> Result<
 /// chronological order (children before parents). `max` caps how many are
 /// returned; `filter_path` optionally restricts to commits that changed the
 /// given path (v1 implementation: naive — always true).
-pub fn log(
-    store: &dyn ObjectStore,
-    head: Hash,
-    max: usize,
-) -> Result<Vec<(Hash, Commit)>> {
+pub fn log(store: &dyn ObjectStore, head: Hash, max: usize) -> Result<Vec<(Hash, Commit)>> {
     let mut out = Vec::new();
     let mut queue = vec![head];
     let mut seen = std::collections::HashSet::new();

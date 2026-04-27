@@ -27,16 +27,9 @@ pub trait ObjectStore: Send + Sync {
     /// Default impl reads the full stream into memory and delegates to `put`.
     /// Backends that can truly stream (disk, S3) override this. See
     /// `docs/design/12-large-files.md §Streaming ingest`.
-    fn put_stream(
-        &self,
-        type_: &str,
-        reader: &mut dyn Read,
-        known_size: u64,
-    ) -> Result<Hash> {
+    fn put_stream(&self, type_: &str, reader: &mut dyn Read, known_size: u64) -> Result<Hash> {
         let cap = usize::try_from(known_size).map_err(|_| {
-            OmpError::internal(format!(
-                "put_stream: known_size {known_size} exceeds usize"
-            ))
+            OmpError::internal(format!("put_stream: known_size {known_size} exceeds usize"))
         })?;
         let mut buf = Vec::with_capacity(cap);
         reader

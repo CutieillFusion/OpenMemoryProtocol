@@ -23,7 +23,10 @@ fn init_drops_starter_pack() {
     assert!(td.path().join("omp.toml").exists());
     // The v1 starter pack is the three `file.*` probes.
     for basename in ["size", "mime", "sha256"] {
-        assert!(td.path().join(format!("probes/file/{basename}.wasm")).exists());
+        assert!(td
+            .path()
+            .join(format!("probes/file/{basename}.wasm"))
+            .exists());
         assert!(td
             .path()
             .join(format!("probes/file/{basename}.probe.toml"))
@@ -55,7 +58,12 @@ fn add_text_then_commit_then_log() {
         ]),
     );
     let res = repo
-        .add("docs/hello.md", b"# Hello\n\nIntro.\n", Some(user), Some("text"))
+        .add(
+            "docs/hello.md",
+            b"# Hello\n\nIntro.\n",
+            Some(user),
+            Some("text"),
+        )
         .unwrap();
     match res {
         omp_core::api::AddResult::Manifest { .. } => {}
@@ -146,9 +154,7 @@ fn test_ingest_dry_run_does_not_stage() {
     repo.commit("init", Some(fixed_author())).unwrap();
 
     // Dry-run an ingest. Nothing should appear in status.staged.
-    let manifest = repo
-        .test_ingest("docs/a.md", b"hi", None, None)
-        .unwrap();
+    let manifest = repo.test_ingest("docs/a.md", b"hi", None, None).unwrap();
     assert_eq!(manifest.file_type, "text");
 
     let status = repo.status().unwrap();
@@ -189,7 +195,9 @@ source = "probe"
 probe = "missing.probe"
 type = "string"
 "#;
-    let err = repo.add("schemas/custom.schema", bad, None, None).unwrap_err();
+    let err = repo
+        .add("schemas/custom.schema", bad, None, None)
+        .unwrap_err();
     assert!(matches!(err, omp_core::OmpError::SchemaValidation(_)));
 }
 
@@ -229,11 +237,8 @@ fn quota_exceeded_is_reported() {
     .unwrap();
 
     // Staging the starter pack pushes past 1 KB of objects.
-    let entries = omp_core::walker::walk_repo(
-        td.path(),
-        &omp_core::walker::WalkOptions::default(),
-    )
-    .unwrap();
+    let entries =
+        omp_core::walker::walk_repo(td.path(), &omp_core::walker::WalkOptions::default()).unwrap();
     let mut errors = Vec::new();
     for e in entries {
         let bytes = std::fs::read(&e.fs_path).unwrap();
@@ -257,7 +262,10 @@ fn list_schemas_returns_starter_then_committed() {
     // Pre-commit: starter schemas dropped on disk by `init` are visible.
     let pre = repo.list_schemas(None).unwrap();
     let names: Vec<_> = pre.iter().map(|s| s.file_type.as_str()).collect();
-    assert!(names.contains(&"text"), "expected `text` schema, got {names:?}");
+    assert!(
+        names.contains(&"text"),
+        "expected `text` schema, got {names:?}"
+    );
     let text = pre.iter().find(|s| s.file_type == "text").unwrap();
     assert!(
         text.fields.iter().any(|f| !f.r#type.is_empty()),
@@ -289,14 +297,18 @@ type = "string"
 required = false
 "#;
     repo.add("schemas/demo.schema", extra, None, None).unwrap();
-    let _c2 = repo.commit("add demo schema", Some(fixed_author())).unwrap();
+    let _c2 = repo
+        .commit("add demo schema", Some(fixed_author()))
+        .unwrap();
 
     let head = repo.list_schemas(None).unwrap();
     assert!(head.iter().any(|s| s.file_type == "demo"));
 
     let old = repo.list_schemas(Some(&c1.hex())).unwrap();
-    assert!(!old.iter().any(|s| s.file_type == "demo"),
-        "demo schema didn't exist at c1, should not appear");
+    assert!(
+        !old.iter().any(|s| s.file_type == "demo"),
+        "demo schema didn't exist at c1, should not appear"
+    );
 }
 
 // Helpers ---------------------------------------------------------------------

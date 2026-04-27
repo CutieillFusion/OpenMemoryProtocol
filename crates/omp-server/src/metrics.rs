@@ -36,9 +36,7 @@ pub fn init() {
                 &buckets,
             )
             .expect("set buckets");
-        let (recorder, _exporter) = builder
-            .build()
-            .expect("build prometheus recorder");
+        let (recorder, _exporter) = builder.build().expect("build prometheus recorder");
         let handle = recorder.handle();
         metrics::set_global_recorder(recorder).ok();
         handle

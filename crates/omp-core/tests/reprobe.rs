@@ -96,9 +96,12 @@ fn schema_update_repopulates_existing_files() {
     repo.commit("v1 schema", Some(fixed_author())).unwrap();
 
     // Commit 2: ingest two text files under v1.
-    repo.add("a.txt", b"hello", Some(Fields::new()), None).unwrap();
-    repo.add("b.txt", b"world!", Some(Fields::new()), None).unwrap();
-    repo.commit("ingest two files", Some(fixed_author())).unwrap();
+    repo.add("a.txt", b"hello", Some(Fields::new()), None)
+        .unwrap();
+    repo.add("b.txt", b"world!", Some(Fields::new()), None)
+        .unwrap();
+    repo.commit("ingest two files", Some(fixed_author()))
+        .unwrap();
 
     // Sanity: a.txt has only byte_size.
     let m = match repo.show("a.txt", None).unwrap() {
@@ -148,7 +151,8 @@ fn time_travel_returns_old_manifest_unchanged() {
     stage_blob(&repo, "schemas/text.schema", TEXT_SCHEMA_V1.as_bytes());
     repo.commit("v1 schema", Some(fixed_author())).unwrap();
 
-    repo.add("a.txt", b"hello", Some(Fields::new()), None).unwrap();
+    repo.add("a.txt", b"hello", Some(Fields::new()), None)
+        .unwrap();
     let pre_commit = repo.commit("ingest", Some(fixed_author())).unwrap();
     let pre_manifest = match repo.show("a.txt", None).unwrap() {
         ShowResult::Manifest { manifest, .. } => manifest,
@@ -158,7 +162,11 @@ fn time_travel_returns_old_manifest_unchanged() {
     // Schema bump.
     let probe_name = register_user_probe(&repo, "custom", "size_v2");
     repo.commit("add user probe", Some(fixed_author())).unwrap();
-    stage_blob(&repo, "schemas/text.schema", text_schema_v2(&probe_name).as_bytes());
+    stage_blob(
+        &repo,
+        "schemas/text.schema",
+        text_schema_v2(&probe_name).as_bytes(),
+    );
     repo.commit("schema v2", Some(fixed_author())).unwrap();
 
     // HEAD has the new field.
@@ -208,7 +216,8 @@ type = "int"
 "#
     );
     stage_blob(&repo, "schemas/text.schema", schema_v1.as_bytes());
-    repo.commit("v1 schema with two fields", Some(fixed_author())).unwrap();
+    repo.commit("v1 schema with two fields", Some(fixed_author()))
+        .unwrap();
 
     repo.add("a.txt", b"hi", Some(Fields::new()), None).unwrap();
     repo.commit("ingest", Some(fixed_author())).unwrap();
@@ -220,7 +229,8 @@ type = "int"
 
     // Drop the field by replacing the schema with v1-style (no _dup).
     stage_blob(&repo, "schemas/text.schema", TEXT_SCHEMA_V1.as_bytes());
-    repo.commit("v2 schema drops byte_size_dup", Some(fixed_author())).unwrap();
+    repo.commit("v2 schema drops byte_size_dup", Some(fixed_author()))
+        .unwrap();
     let post = match repo.show("a.txt", None).unwrap() {
         ShowResult::Manifest { manifest, .. } => manifest,
         x => panic!("{x:?}"),
@@ -312,14 +322,21 @@ fn reprobe_only_walks_committed_manifests() {
     stage_blob(&repo, "schemas/text.schema", TEXT_SCHEMA_V1.as_bytes());
     repo.commit("v1", Some(fixed_author())).unwrap();
 
-    repo.add("a.txt", b"old", Some(Fields::new()), None).unwrap();
-    repo.commit("ingest a.txt under v1", Some(fixed_author())).unwrap();
+    repo.add("a.txt", b"old", Some(Fields::new()), None)
+        .unwrap();
+    repo.commit("ingest a.txt under v1", Some(fixed_author()))
+        .unwrap();
 
     // Stage v2 schema + a brand new file b.txt in the SAME commit.
     let probe_name = register_user_probe(&repo, "custom", "size_v2");
     repo.commit("user probe", Some(fixed_author())).unwrap();
-    stage_blob(&repo, "schemas/text.schema", text_schema_v2(&probe_name).as_bytes());
-    repo.add("b.txt", b"new", Some(Fields::new()), None).unwrap();
+    stage_blob(
+        &repo,
+        "schemas/text.schema",
+        text_schema_v2(&probe_name).as_bytes(),
+    );
+    repo.add("b.txt", b"new", Some(Fields::new()), None)
+        .unwrap();
     let (_hash, summaries) = repo
         .commit_with_summary("v2 + ingest b", Some(fixed_author()))
         .unwrap();
@@ -332,7 +349,10 @@ fn reprobe_only_walks_committed_manifests() {
         ShowResult::Manifest { manifest, .. } => manifest,
         x => panic!("{x:?}"),
     };
-    assert!(a.fields.contains_key("byte_size_v2"), "a.txt should be reprobed");
+    assert!(
+        a.fields.contains_key("byte_size_v2"),
+        "a.txt should be reprobed"
+    );
 
     let b = match repo.show("b.txt", None).unwrap() {
         ShowResult::Manifest { manifest, .. } => manifest,
@@ -379,4 +399,3 @@ fn cosmetic_schema_change_is_a_no_op() {
         );
     }
 }
-

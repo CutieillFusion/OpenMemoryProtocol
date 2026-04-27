@@ -167,9 +167,7 @@ async fn tenants_are_isolated() {
         .unwrap();
     let staged = alice_status["staged"].as_array().expect("staged array");
     assert!(
-        staged
-            .iter()
-            .any(|e| e["path"] == "alice-secret.md"),
+        staged.iter().any(|e| e["path"] == "alice-secret.md"),
         "alice's staged entry missing: {alice_status}"
     );
     assert!(alice_files.is_array());

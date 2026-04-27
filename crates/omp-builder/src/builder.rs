@@ -186,9 +186,7 @@ async fn run_cargo(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("spawn cargo: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| format!("spawn cargo: {e}"))?;
 
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
@@ -204,7 +202,10 @@ async fn run_cargo(
         if !status.success() {
             return Err(format!(
                 "cargo exited non-zero (code {})",
-                status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into())
+                status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".into())
             ));
         }
         Ok::<(), String>(())
@@ -280,7 +281,9 @@ mod tests {
         stamp_skeleton(&scratch, &probe_common, &req).await.unwrap();
         assert!(scratch.join("Cargo.toml").exists());
         assert!(scratch.join("src/lib.rs").exists());
-        let cargo = tokio::fs::read_to_string(scratch.join("Cargo.toml")).await.unwrap();
+        let cargo = tokio::fs::read_to_string(scratch.join("Cargo.toml"))
+            .await
+            .unwrap();
         assert!(cargo.contains("probe-common"));
         assert!(cargo.contains("crate-type = [\"cdylib\"]"));
     }
@@ -289,7 +292,9 @@ mod tests {
     async fn build_artifacts_paths_match_namespace_name() {
         let td = TempDir::new().unwrap();
         let wasm = td.path().join("probe_lib.wasm");
-        tokio::fs::write(&wasm, b"\x00asm\x01\x00\x00\x00").await.unwrap();
+        tokio::fs::write(&wasm, b"\x00asm\x01\x00\x00\x00")
+            .await
+            .unwrap();
         let req = BuildRequest {
             tenant: "alice".into(),
             namespace: "test".into(),
@@ -326,9 +331,18 @@ mod tests {
         // Stamp a no-op skeleton so cargo would have something to do (it
         // won't, because the wall-clock cap is 0s). probe_common path is
         // bogus but cargo never gets that far.
-        tokio::fs::write(scratch.join("Cargo.toml"), b"[package]\nname=\"x\"\nversion=\"0.0.0\"\nedition=\"2021\"\n").await.unwrap();
-        tokio::fs::create_dir_all(scratch.join("src")).await.unwrap();
-        tokio::fs::write(scratch.join("src/lib.rs"), b"").await.unwrap();
+        tokio::fs::write(
+            scratch.join("Cargo.toml"),
+            b"[package]\nname=\"x\"\nversion=\"0.0.0\"\nedition=\"2021\"\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::create_dir_all(scratch.join("src"))
+            .await
+            .unwrap();
+        tokio::fs::write(scratch.join("src/lib.rs"), b"")
+            .await
+            .unwrap();
 
         let res = run_cargo(&state, &id, &scratch, Duration::from_millis(0)).await;
         assert!(res.is_err(), "expected timeout error, got {:?}", res);

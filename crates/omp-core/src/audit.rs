@@ -176,11 +176,7 @@ mod tests {
         let td = TempDir::new().unwrap();
         let store = DiskStore::init(td.path()).unwrap();
 
-        let h1 = append(
-            &store,
-            AuditEntry::new("alice", "token.accepted", "tok123"),
-        )
-        .unwrap();
+        let h1 = append(&store, AuditEntry::new("alice", "token.accepted", "tok123")).unwrap();
         let h2 = append(
             &store,
             AuditEntry::new("alice", "commit.created", "user")

@@ -78,9 +78,16 @@ fn encrypted_chunked_roundtrip() {
     // source_hash points at a chunks object, whose body is plaintext.
     let store = DiskStore::open(td.path()).unwrap();
     let (ty, body) = store.get(&source_hash).unwrap().unwrap();
-    assert_eq!(ty, "chunks", "encrypted chunked ingest still produces a chunks object");
+    assert_eq!(
+        ty, "chunks",
+        "encrypted chunked ingest still produces a chunks object"
+    );
     let parsed = ChunksBody::parse(&body).unwrap();
-    assert_eq!(parsed.entries.len(), 4, "four chunks for a 200-byte file at 64/chunk");
+    assert_eq!(
+        parsed.entries.len(),
+        4,
+        "four chunks for a 200-byte file at 64/chunk"
+    );
 
     // Each referenced chunk's content length is (plaintext + 29) — the 29
     // bytes are the aead framing: 1 (alg) + 12 (nonce) + 16 (tag).
@@ -175,10 +182,8 @@ fn tampering_a_chunk_fails_open() {
                         let mut new_content = content.to_vec();
                         let mid = new_content.len() / 2;
                         new_content[mid] ^= 0x01;
-                        let new_framed = omp_core::object::frame(
-                            omp_core::ObjectType::Blob,
-                            &new_content,
-                        );
+                        let new_framed =
+                            omp_core::object::frame(omp_core::ObjectType::Blob, &new_content);
                         let new_compressed =
                             omp_core::object::compress_framed(&new_framed).unwrap();
                         fs::write(&path, &new_compressed).unwrap();
@@ -344,7 +349,8 @@ source = "probe"
 probe = "file.sha256"
 type = "string"
 "#;
-    repo.add("schemas/bin.schema", bin_schema, None, None).unwrap();
+    repo.add("schemas/bin.schema", bin_schema, None, None)
+        .unwrap();
     repo.commit("init", Some(fixed_author())).unwrap();
 
     let keys = make_keys(&TenantId::local());

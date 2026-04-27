@@ -40,11 +40,9 @@ pub struct SessionState {
 
 impl SessionState {
     fn parse(bytes: &[u8]) -> Result<Self> {
-        let s = std::str::from_utf8(bytes).map_err(|_| {
-            OmpError::Corrupt("upload state.toml is not UTF-8".into())
-        })?;
-        toml::from_str(s)
-            .map_err(|e| OmpError::Corrupt(format!("upload state.toml: {e}")))
+        let s = std::str::from_utf8(bytes)
+            .map_err(|_| OmpError::Corrupt("upload state.toml is not UTF-8".into()))?;
+        toml::from_str(s).map_err(|e| OmpError::Corrupt(format!("upload state.toml: {e}")))
     }
 
     fn serialize(&self) -> Result<Vec<u8>> {
@@ -76,8 +74,7 @@ impl UploadManager {
     /// `chunk_size_bytes`. Callers may PATCH in any chunk size, but the
     /// server reassembles via the session's declared chunk size at commit.
     pub fn open(&self, declared_size: u64) -> Result<UploadHandle> {
-        fs::create_dir_all(&self.uploads_dir)
-            .map_err(|e| OmpError::io(&self.uploads_dir, e))?;
+        fs::create_dir_all(&self.uploads_dir).map_err(|e| OmpError::io(&self.uploads_dir, e))?;
 
         let id = generate_id();
         let dir = self.session_dir(&id);
@@ -92,8 +89,7 @@ impl UploadManager {
             chunk_size_bytes: self.default_chunk_size,
         };
         let body = state.serialize()?;
-        fs::write(dir.join("state.toml"), body)
-            .map_err(|e| OmpError::io(&dir, e))?;
+        fs::write(dir.join("state.toml"), body).map_err(|e| OmpError::io(&dir, e))?;
         Ok(UploadHandle {
             upload_id: id,
             chunk_size_bytes: self.default_chunk_size,
@@ -237,9 +233,7 @@ impl UploadManager {
     pub fn load_state(&self, id: &str) -> Result<SessionState> {
         let path = self.session_dir(id).join("state.toml");
         let bytes = fs::read(&path).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => {
-                OmpError::NotFound(format!("upload session {id}"))
-            }
+            std::io::ErrorKind::NotFound => OmpError::NotFound(format!("upload session {id}")),
             _ => OmpError::io(&path, e),
         })?;
         SessionState::parse(&bytes)
@@ -253,8 +247,7 @@ fn generate_id() -> String {
     let mut bytes = [0u8; 16];
     let mut f = File::open("/dev/urandom").expect("open /dev/urandom");
     f.read_exact(&mut bytes).expect("read /dev/urandom");
-    const ALPHA: &[u8] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut out = String::with_capacity(22);
     for b in bytes {
         out.push(ALPHA[(b as usize) % ALPHA.len()] as char);

@@ -60,9 +60,8 @@ impl ProbeManifest {
             max_input_bytes: Option<u64>,
         }
 
-        let s = std::str::from_utf8(bytes).map_err(|_| {
-            OmpError::SchemaValidation("probe.toml is not UTF-8".into())
-        })?;
+        let s = std::str::from_utf8(bytes)
+            .map_err(|_| OmpError::SchemaValidation("probe.toml is not UTF-8".into()))?;
         let raw: Raw = toml::from_str(s)
             .map_err(|e| OmpError::SchemaValidation(format!("probe.toml: {e}")))?;
         let (max_input_bytes, limits_override) = match raw.limits {

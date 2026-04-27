@@ -120,12 +120,7 @@ async fn query_filters_by_top_level_file_type() {
         "{base}/query?where={}",
         urlencoding::encode("file_type = \"pdf\"")
     );
-    let body: serde_json::Value = reqwest::get(&url_zero)
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let body: serde_json::Value = reqwest::get(&url_zero).await.unwrap().json().await.unwrap();
     assert!(body["matches"].as_array().unwrap().is_empty());
 }
 
@@ -189,7 +184,10 @@ async fn query_pagination_via_cursor() {
         .map(|e| e["path"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(page2.len(), 3);
-    let cursor2 = body["next_cursor"].as_str().expect("page 2 cursor").to_string();
+    let cursor2 = body["next_cursor"]
+        .as_str()
+        .expect("page 2 cursor")
+        .to_string();
 
     // Page 3: only the seed doc-06.md left.
     let body: serde_json::Value = reqwest::get(format!(
@@ -209,7 +207,10 @@ async fn query_pagination_via_cursor() {
         .collect();
     assert_eq!(page3.len(), 1);
     assert_eq!(page3[0], "doc-06.md");
-    assert!(body["next_cursor"].is_null(), "last page should not set next_cursor");
+    assert!(
+        body["next_cursor"].is_null(),
+        "last page should not set next_cursor"
+    );
 
     // Together, page1 + page2 + page3 should cover all 7 docs distinctly,
     // sorted lexicographically.

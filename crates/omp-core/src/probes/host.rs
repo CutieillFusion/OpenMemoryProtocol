@@ -55,8 +55,10 @@ pub fn run_probe(
     config: &ProbeConfig,
 ) -> Result<ProbeResult> {
     let engine = build_engine(config)?;
-    let module = Module::from_binary(&engine, wasm)
-        .map_err(|e| OmpError::ProbeFailed { probe: name.into(), reason: format!("load: {e:#}") })?;
+    let module = Module::from_binary(&engine, wasm).map_err(|e| OmpError::ProbeFailed {
+        probe: name.into(),
+        reason: format!("load: {e:#}"),
+    })?;
 
     // Refuse to instantiate any module that declares an import.
     let import_count = module.imports().count();
@@ -103,18 +105,20 @@ pub fn run_probe(
             reason: format!("instantiate: {e}"),
         })?;
 
-    let alloc: TypedFunc<u32, u32> = instance
-        .get_typed_func(&mut store, "alloc")
-        .map_err(|e| OmpError::ProbeFailed {
-            probe: name.into(),
-            reason: format!("missing alloc: {e}"),
-        })?;
-    let free: TypedFunc<(u32, u32), ()> = instance
-        .get_typed_func(&mut store, "free")
-        .map_err(|e| OmpError::ProbeFailed {
-            probe: name.into(),
-            reason: format!("missing free: {e}"),
-        })?;
+    let alloc: TypedFunc<u32, u32> =
+        instance
+            .get_typed_func(&mut store, "alloc")
+            .map_err(|e| OmpError::ProbeFailed {
+                probe: name.into(),
+                reason: format!("missing alloc: {e}"),
+            })?;
+    let free: TypedFunc<(u32, u32), ()> =
+        instance
+            .get_typed_func(&mut store, "free")
+            .map_err(|e| OmpError::ProbeFailed {
+                probe: name.into(),
+                reason: format!("missing free: {e}"),
+            })?;
     let probe_run: TypedFunc<(u32, u32), i64> = instance
         .get_typed_func(&mut store, "probe_run")
         .map_err(|e| OmpError::ProbeFailed {
@@ -122,12 +126,13 @@ pub fn run_probe(
             reason: format!("missing probe_run: {e}"),
         })?;
 
-    let memory = instance
-        .get_memory(&mut store, "memory")
-        .ok_or_else(|| OmpError::ProbeFailed {
-            probe: name.into(),
-            reason: "module has no exported 'memory'".into(),
-        })?;
+    let memory =
+        instance
+            .get_memory(&mut store, "memory")
+            .ok_or_else(|| OmpError::ProbeFailed {
+                probe: name.into(),
+                reason: "module has no exported 'memory'".into(),
+            })?;
 
     // Enforce the per-module memory cap: reject immediately if the module's
     // memory already exceeds the ceiling (shouldn't happen with our crates),
@@ -318,8 +323,14 @@ mod tests {
                )"#,
         )
         .unwrap();
-        let err = run_probe("test.import", &wasm, &[], &BTreeMap::new(), &ProbeConfig::default())
-            .unwrap_err();
+        let err = run_probe(
+            "test.import",
+            &wasm,
+            &[],
+            &BTreeMap::new(),
+            &ProbeConfig::default(),
+        )
+        .unwrap_err();
         match err {
             OmpError::ProbeFailed { reason, .. } => {
                 assert!(reason.contains("host imports"), "got: {reason}");
@@ -347,7 +358,11 @@ mod tests {
             &wasm,
             &[],
             &BTreeMap::new(),
-            &ProbeConfig { fuel: 10_000, memory_mb: 16, wall_clock_s: 30 },
+            &ProbeConfig {
+                fuel: 10_000,
+                memory_mb: 16,
+                wall_clock_s: 30,
+            },
         )
         .unwrap_err();
         assert!(matches!(err, OmpError::ProbeFailed { .. }));

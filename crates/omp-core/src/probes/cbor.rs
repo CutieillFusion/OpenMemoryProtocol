@@ -26,11 +26,10 @@ pub fn encode_input(bytes: &[u8], kwargs: &BTreeMap<String, FieldValue>) -> Resu
 }
 
 pub fn decode_output(bytes: &[u8]) -> Result<FieldValue> {
-    let v: Cbor = ciborium::de::from_reader(bytes)
-        .map_err(|e| OmpError::ProbeFailed {
-            probe: "<output>".into(),
-            reason: format!("decoding output: {e}"),
-        })?;
+    let v: Cbor = ciborium::de::from_reader(bytes).map_err(|e| OmpError::ProbeFailed {
+        probe: "<output>".into(),
+        reason: format!("decoding output: {e}"),
+    })?;
     cbor_to_field(&v)
 }
 

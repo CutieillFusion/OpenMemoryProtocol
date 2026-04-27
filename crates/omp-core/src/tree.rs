@@ -125,13 +125,8 @@ impl Tree {
         out.push(b'\n');
         for (name, entry) in &self.entries {
             let nonce = crate::keys::derive_nonce(key, b"tree-name", name.as_bytes())?;
-            let sealed = omp_crypto::aead::seal(
-                key,
-                &nonce,
-                TREE_NAME_AAD,
-                name.as_bytes(),
-            )
-            .map_err(|e| OmpError::internal(format!("seal tree name: {e}")))?;
+            let sealed = omp_crypto::aead::seal(key, &nonce, TREE_NAME_AAD, name.as_bytes())
+                .map_err(|e| OmpError::internal(format!("seal tree name: {e}")))?;
             out.extend_from_slice(entry.mode.as_str().as_bytes());
             out.push(b' ');
             out.extend_from_slice(entry.hash.hex().as_bytes());
@@ -176,29 +171,27 @@ impl Tree {
             if line.is_empty() {
                 continue;
             }
-            let (meta, name_field) = line.split_once('\t').ok_or_else(|| {
-                OmpError::Corrupt(format!("tree line {line_no}: missing tab"))
-            })?;
-            let (mode_s, hash_s) = meta.split_once(' ').ok_or_else(|| {
-                OmpError::Corrupt(format!("tree line {line_no}: missing space"))
-            })?;
+            let (meta, name_field) = line
+                .split_once('\t')
+                .ok_or_else(|| OmpError::Corrupt(format!("tree line {line_no}: missing tab")))?;
+            let (mode_s, hash_s) = meta
+                .split_once(' ')
+                .ok_or_else(|| OmpError::Corrupt(format!("tree line {line_no}: missing space")))?;
             let mode = Mode::parse(mode_s)?;
-            let hash: Hash = hash_s.parse().map_err(|e| {
-                OmpError::Corrupt(format!("tree line {line_no}: bad hash: {e}"))
-            })?;
+            let hash: Hash = hash_s
+                .parse()
+                .map_err(|e| OmpError::Corrupt(format!("tree line {line_no}: bad hash: {e}")))?;
             let name = if encrypted {
                 use crate::share::hex_decode;
                 let sealed = hex_decode(name_field)?;
                 let key = path_key.unwrap();
-                let opened = omp_crypto::aead::open(key, TREE_NAME_AAD, &sealed).map_err(
-                    |_| OmpError::Unauthorized(format!(
+                let opened = omp_crypto::aead::open(key, TREE_NAME_AAD, &sealed).map_err(|_| {
+                    OmpError::Unauthorized(format!(
                         "tree line {line_no}: sealed name did not open (wrong path_key or tampered)"
-                    )),
-                )?;
-                String::from_utf8(opened).map_err(|_| {
-                    OmpError::Corrupt(format!(
-                        "tree line {line_no}: decrypted name is not UTF-8"
                     ))
+                })?;
+                String::from_utf8(opened).map_err(|_| {
+                    OmpError::Corrupt(format!("tree line {line_no}: decrypted name is not UTF-8"))
                 })?
             } else {
                 name_field.to_string()
@@ -209,7 +202,6 @@ impl Tree {
         Ok(out)
     }
 }
-
 
 fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() {
@@ -277,9 +269,30 @@ mod tests {
     #[test]
     fn entries_are_sorted_lexicographically() {
         let mut t = Tree::new();
-        t.insert("z", Entry { mode: Mode::Blob, hash: h("z") }).unwrap();
-        t.insert("a", Entry { mode: Mode::Blob, hash: h("a") }).unwrap();
-        t.insert("m", Entry { mode: Mode::Blob, hash: h("m") }).unwrap();
+        t.insert(
+            "z",
+            Entry {
+                mode: Mode::Blob,
+                hash: h("z"),
+            },
+        )
+        .unwrap();
+        t.insert(
+            "a",
+            Entry {
+                mode: Mode::Blob,
+                hash: h("a"),
+            },
+        )
+        .unwrap();
+        t.insert(
+            "m",
+            Entry {
+                mode: Mode::Blob,
+                hash: h("m"),
+            },
+        )
+        .unwrap();
         let bytes = t.serialize();
         let s = std::str::from_utf8(&bytes).unwrap();
         let lines: Vec<&str> = s.lines().collect();
@@ -307,10 +320,22 @@ mod tests {
     fn rejects_dot_entries() {
         let mut t = Tree::new();
         assert!(t
-            .insert(".", Entry { mode: Mode::Blob, hash: h("a") })
+            .insert(
+                ".",
+                Entry {
+                    mode: Mode::Blob,
+                    hash: h("a")
+                }
+            )
             .is_err());
         assert!(t
-            .insert("..", Entry { mode: Mode::Blob, hash: h("a") })
+            .insert(
+                "..",
+                Entry {
+                    mode: Mode::Blob,
+                    hash: h("a")
+                }
+            )
             .is_err());
     }
 
@@ -435,13 +460,7 @@ mod tests {
         assert_eq!(std::str::from_utf8(&bytes).unwrap(), expected_line);
         // The framed-object hash equals sha256("tree <size>\0<bytes>").
         let framed_hash = hash_of(ObjectType::Tree, &bytes);
-        let manual = Hash::of(
-            &[
-                format!("tree {}\0", bytes.len()).as_bytes(),
-                &bytes,
-            ]
-            .concat(),
-        );
+        let manual = Hash::of(&[format!("tree {}\0", bytes.len()).as_bytes(), &bytes].concat());
         assert_eq!(framed_hash, manual);
     }
 }

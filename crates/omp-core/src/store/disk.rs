@@ -62,10 +62,7 @@ impl DiskStore {
 
     fn object_path(&self, h: &Hash) -> PathBuf {
         let hex = h.hex();
-        self.root
-            .join("objects")
-            .join(&hex[..2])
-            .join(&hex[2..])
+        self.root.join("objects").join(&hex[..2]).join(&hex[2..])
     }
 
     fn ref_path(&self, name: &str) -> Result<PathBuf> {
@@ -86,8 +83,7 @@ impl DiskStore {
             .truncate(false)
             .open(&path)
             .map_err(|e| OmpError::io(&path, e))?;
-        file.lock_exclusive()
-            .map_err(|e| OmpError::io(&path, e))?;
+        file.lock_exclusive().map_err(|e| OmpError::io(&path, e))?;
         Ok(RefsLock { file: Some(file) })
     }
 }
@@ -122,12 +118,7 @@ impl ObjectStore for DiskStore {
         Ok(hash)
     }
 
-    fn put_stream(
-        &self,
-        type_: &str,
-        reader: &mut dyn Read,
-        known_size: u64,
-    ) -> Result<Hash> {
+    fn put_stream(&self, type_: &str, reader: &mut dyn Read, known_size: u64) -> Result<Hash> {
         // See docs/design/12-large-files.md §Disk backend implementation sketch.
         //
         // 1. Hash-and-zlib-compress `"<type> <size>\0"` + streamed content
@@ -140,11 +131,7 @@ impl ObjectStore for DiskStore {
 
         let tmp_dir = self.root.join("objects").join("tmp");
         create_dir(&tmp_dir)?;
-        let tmp_path = tmp_dir.join(format!(
-            "stream.{}.{}",
-            std::process::id(),
-            tmp_counter()
-        ));
+        let tmp_path = tmp_dir.join(format!("stream.{}.{}", std::process::id(), tmp_counter()));
 
         let mut hasher = Sha256::new();
         hasher.update(header.as_bytes());
@@ -185,9 +172,7 @@ impl ObjectStore for DiskStore {
             )));
         }
 
-        let final_out = encoder
-            .finish()
-            .map_err(|e| OmpError::io(&tmp_path, e))?;
+        let final_out = encoder.finish().map_err(|e| OmpError::io(&tmp_path, e))?;
         final_out
             .sync_all()
             .map_err(|e| OmpError::io(&tmp_path, e))?;
@@ -210,9 +195,7 @@ impl ObjectStore for DiskStore {
         if let Err(first) = fs::rename(&tmp_path, &final_path) {
             // Mirror `write_atomic`'s fallback for filesystems that don't
             // support rename-over-existing.
-            if fs::remove_file(&final_path).is_ok()
-                && fs::rename(&tmp_path, &final_path).is_ok()
-            {
+            if fs::remove_file(&final_path).is_ok() && fs::rename(&tmp_path, &final_path).is_ok() {
                 return Ok(hash);
             }
             let _ = fs::remove_file(&tmp_path);
@@ -335,11 +318,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| OmpError::internal("atomic write: no parent"))?;
-    let tmp = parent.join(format!(
-        ".tmp.{}.{}",
-        std::process::id(),
-        tmp_counter()
-    ));
+    let tmp = parent.join(format!(".tmp.{}.{}", std::process::id(), tmp_counter()));
     {
         let mut f = OpenOptions::new()
             .create(true)
@@ -441,7 +420,9 @@ mod tests {
         let td2 = TempDir::new().unwrap();
         let s2 = DiskStore::init(td2.path()).unwrap();
         let mut cur = std::io::Cursor::new(content.clone());
-        let h_stream = s2.put_stream("blob", &mut cur, content.len() as u64).unwrap();
+        let h_stream = s2
+            .put_stream("blob", &mut cur, content.len() as u64)
+            .unwrap();
         assert_eq!(h_put, h_stream);
         let (t, back) = s2.get(&h_stream).unwrap().unwrap();
         assert_eq!(t, "blob");

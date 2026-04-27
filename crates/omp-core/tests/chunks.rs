@@ -84,7 +84,12 @@ fn large_file_produces_chunks_object() {
     assert_eq!(ty, "chunks", "source_hash must resolve to a chunks object");
 
     let parsed = ChunksBody::parse(&body).unwrap();
-    assert_eq!(parsed.entries.len(), 4, "expected 4 chunks, got {}", parsed.entries.len());
+    assert_eq!(
+        parsed.entries.len(),
+        4,
+        "expected 4 chunks, got {}",
+        parsed.entries.len()
+    );
     // The chunk lengths should sum to the full file.
     assert_eq!(parsed.total_length(), 200);
     // Per-chunk sizes: three 64-byte + one 8-byte tail.

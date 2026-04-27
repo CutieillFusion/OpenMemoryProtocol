@@ -101,14 +101,17 @@ fn user_uploaded_probe_runs_at_ingest() {
     // probe in HEAD because of Phase 1.
     let schema_bytes = schema_with_user_probe(&probe_name);
     stage_blob(&repo, "schemas/text.schema", schema_bytes.as_bytes());
-    repo.commit("update text schema", Some(fixed_author())).unwrap();
+    repo.commit("update text schema", Some(fixed_author()))
+        .unwrap();
 
     // Commit 3: ingest a text file. The new schema requires both
     // byte_size (file.size, starter) and byte_size_v2 (custom.bytecount,
     // tree-resident).
     let body = b"hello tree-resident probes";
-    repo.add("hello.txt", body, Some(Fields::new()), None).unwrap();
-    repo.commit("ingest with user probe", Some(fixed_author())).unwrap();
+    repo.add("hello.txt", body, Some(Fields::new()), None)
+        .unwrap();
+    repo.commit("ingest with user probe", Some(fixed_author()))
+        .unwrap();
 
     let result = repo.show("hello.txt", None).unwrap();
     let manifest = match result {
@@ -202,7 +205,8 @@ fn starter_probes_in_tree_dedup_with_embedded_pack() {
     // test acts as a regression canary that current_probes() doesn't
     // explode when a starter probe also lives in the tree.
     let body = b"checks the dedup path";
-    repo.add("note.txt", body, Some(Fields::new()), None).unwrap();
+    repo.add("note.txt", body, Some(Fields::new()), None)
+        .unwrap();
     repo.commit("ingest", Some(fixed_author())).unwrap();
 
     let result = repo.show("note.txt", None).unwrap();

@@ -57,11 +57,7 @@ fn store_tree_with_key(
 /// - A missing segment yields `Ok(None)`.
 /// - Attempting to walk *through* a non-tree is `Ok(None)` (the caller can't
 ///   disambiguate "missing" vs "not a directory" here, matching Git's behavior).
-pub fn get_at(
-    store: &dyn ObjectStore,
-    path: &str,
-    root: &Hash,
-) -> Result<Option<(Mode, Hash)>> {
+pub fn get_at(store: &dyn ObjectStore, path: &str, root: &Hash) -> Result<Option<(Mode, Hash)>> {
     get_at_with_key(store, path, root, None)
 }
 
@@ -164,11 +160,7 @@ fn put_inner(
 
 /// Remove the entry at `path`. Returns the new root-tree hash, or `Ok(None)`
 /// if the tree collapses to empty. Empty intermediate directories are pruned.
-pub fn delete_at(
-    store: &dyn ObjectStore,
-    root: &Hash,
-    path: &str,
-) -> Result<Option<Hash>> {
+pub fn delete_at(store: &dyn ObjectStore, root: &Hash, path: &str) -> Result<Option<Hash>> {
     delete_at_with_key(store, root, path, None)
 }
 
@@ -380,14 +372,20 @@ mod tests {
             &s,
             None,
             "a/b/c.md",
-            Entry { mode: Mode::Manifest, hash: b1 },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b1,
+            },
         )
         .unwrap();
         let r = put_at(
             &s,
             Some(&r),
             "a/b/d.md",
-            Entry { mode: Mode::Manifest, hash: b2 },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b2,
+            },
         )
         .unwrap();
         let r = delete_at(&s, &r, "a/b/c.md").unwrap().unwrap();
@@ -406,14 +404,20 @@ mod tests {
             &s,
             None,
             "a/x",
-            Entry { mode: Mode::Manifest, hash: b1 },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b1,
+            },
         )
         .unwrap();
         let r = put_at(
             &s,
             Some(&r),
             "a/y",
-            Entry { mode: Mode::Manifest, hash: b2 },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b2,
+            },
         )
         .unwrap();
         let (mode, subtree_hash) = get_at(&s, "a", &r).unwrap().unwrap();
@@ -422,7 +426,10 @@ mod tests {
             &s,
             Some(&r),
             "b",
-            Entry { mode: Mode::Tree, hash: subtree_hash },
+            Entry {
+                mode: Mode::Tree,
+                hash: subtree_hash,
+            },
         )
         .unwrap();
         let r = delete_at(&s, &r, "a").unwrap().unwrap();
@@ -438,21 +445,30 @@ mod tests {
             &s,
             None,
             "z/b",
-            Entry { mode: Mode::Manifest, hash: b },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b,
+            },
         )
         .unwrap();
         let r = put_at(
             &s,
             Some(&r),
             "z/a",
-            Entry { mode: Mode::Blob, hash: b },
+            Entry {
+                mode: Mode::Blob,
+                hash: b,
+            },
         )
         .unwrap();
         let r = put_at(
             &s,
             Some(&r),
             "a",
-            Entry { mode: Mode::Manifest, hash: b },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b,
+            },
         )
         .unwrap();
         let all = walk(&s, &r).unwrap();
@@ -468,7 +484,10 @@ mod tests {
             &s,
             None,
             "a/../b",
-            Entry { mode: Mode::Manifest, hash: b },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b,
+            },
         )
         .unwrap_err();
         assert!(matches!(err, OmpError::InvalidPath(_)));
@@ -482,14 +501,20 @@ mod tests {
             &s,
             None,
             "a",
-            Entry { mode: Mode::Manifest, hash: b },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b,
+            },
         )
         .unwrap();
         let err = put_at(
             &s,
             Some(&r),
             "a/b",
-            Entry { mode: Mode::Manifest, hash: b },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b,
+            },
         )
         .unwrap_err();
         assert!(matches!(err, OmpError::Conflict(_)));
@@ -504,19 +529,22 @@ mod tests {
             &s,
             None,
             "x",
-            Entry { mode: Mode::Manifest, hash: b1 },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b1,
+            },
         )
         .unwrap();
         let r = put_at(
             &s,
             Some(&r),
             "x",
-            Entry { mode: Mode::Manifest, hash: b2 },
+            Entry {
+                mode: Mode::Manifest,
+                hash: b2,
+            },
         )
         .unwrap();
-        assert_eq!(
-            get_at(&s, "x", &r).unwrap().unwrap(),
-            (Mode::Manifest, b2)
-        );
+        assert_eq!(get_at(&s, "x", &r).unwrap().unwrap(), (Mode::Manifest, b2));
     }
 }

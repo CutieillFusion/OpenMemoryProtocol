@@ -153,7 +153,9 @@ fn emit_pair(key: &str, item: &Item, out: &mut String) -> Result<()> {
 
 fn quote_key(k: &str) -> String {
     // Bare-key regex: [A-Za-z0-9_-]+
-    let bare = !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    let bare = !k.is_empty()
+        && k.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
     if bare {
         k.to_string()
     } else {
@@ -197,8 +199,7 @@ fn emit_value(v: &Value, out: &mut String) -> Result<()> {
             out.push(']');
         }
         Value::InlineTable(tbl) => {
-            let mut entries: Vec<(&str, &Value)> =
-                tbl.iter().map(|(k, v)| (k, v)).collect();
+            let mut entries: Vec<(&str, &Value)> = tbl.iter().map(|(k, v)| (k, v)).collect();
             entries.sort_by(|a, b| a.0.cmp(b.0));
             out.push('{');
             for (i, (k, val)) in entries.iter().enumerate() {
@@ -245,7 +246,12 @@ fn format_float(x: f64) -> String {
         return "0.0".to_string();
     }
     let s = format!("{:?}", x);
-    if s.contains('.') || s.contains('e') || s.contains('E') || s.contains("inf") || s.contains("NaN") {
+    if s.contains('.')
+        || s.contains('e')
+        || s.contains('E')
+        || s.contains("inf")
+        || s.contains("NaN")
+    {
         s
     } else {
         format!("{s}.0")
@@ -354,10 +360,8 @@ tags = ["finance", "q3"]
         ];
         let root_entries = prop::collection::vec((key_strat, scalar_strat.clone()), 0..5);
         let probe_key = "\"[a-z][a-z0-9_]{0,5}\\.[a-z][a-z0-9_]{0,5}\"";
-        let probe_entries = prop::collection::vec(
-            (probe_key, "\"[a-f0-9]{8}\"".prop_map(|s| s)),
-            0..4,
-        );
+        let probe_entries =
+            prop::collection::vec((probe_key, "\"[a-f0-9]{8}\"".prop_map(|s| s)), 0..4);
         let field_entries = prop::collection::vec(("[a-z][a-z0-9_]{0,6}", scalar_strat), 0..5);
 
         (root_entries, probe_entries, field_entries).prop_map(|(root, probe, fields)| {

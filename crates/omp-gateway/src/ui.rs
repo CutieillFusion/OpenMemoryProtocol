@@ -77,10 +77,8 @@ fn serve_asset(path: &str, html: bool) -> Response {
             if html {
                 // SPA fallback should never be cached — it's the boot
                 // document and we want users to pick up the latest build.
-                resp.headers_mut().insert(
-                    header::CACHE_CONTROL,
-                    HeaderValue::from_static("no-cache"),
-                );
+                resp.headers_mut()
+                    .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
             }
             resp
         }

@@ -47,22 +47,12 @@ impl EncryptedManifestEnvelope {
         let body_bytes = manifest.serialize()?;
 
         let wrap_nonce = aead::random_nonce();
-        let wrapped = aead::seal(
-            data_key,
-            &wrap_nonce,
-            AAD_CONTENT_KEY_WRAP,
-            content_key,
-        )
-        .map_err(|e| OmpError::internal(format!("wrap content key: {e}")))?;
+        let wrapped = aead::seal(data_key, &wrap_nonce, AAD_CONTENT_KEY_WRAP, content_key)
+            .map_err(|e| OmpError::internal(format!("wrap content key: {e}")))?;
 
         let body_nonce = aead::random_nonce();
-        let sealed = aead::seal(
-            manifest_key,
-            &body_nonce,
-            AAD_MANIFEST,
-            &body_bytes,
-        )
-        .map_err(|e| OmpError::internal(format!("seal manifest body: {e}")))?;
+        let sealed = aead::seal(manifest_key, &body_nonce, AAD_MANIFEST, &body_bytes)
+            .map_err(|e| OmpError::internal(format!("seal manifest body: {e}")))?;
 
         let env = EncryptedManifestEnvelope {
             alg: ALG.into(),
@@ -80,8 +70,8 @@ impl EncryptedManifestEnvelope {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let s = std::str::from_utf8(bytes)
             .map_err(|_| OmpError::Corrupt("envelope is not UTF-8".into()))?;
-        let env: EncryptedManifestEnvelope = toml::from_str(s)
-            .map_err(|e| OmpError::Corrupt(format!("envelope TOML: {e}")))?;
+        let env: EncryptedManifestEnvelope =
+            toml::from_str(s).map_err(|e| OmpError::Corrupt(format!("envelope TOML: {e}")))?;
         if env.alg != ALG {
             return Err(OmpError::Corrupt(format!(
                 "envelope alg {:?} not supported (want {:?})",
@@ -101,23 +91,25 @@ impl EncryptedManifestEnvelope {
         data_key: &[u8; 32],
     ) -> Result<(Manifest, [u8; 32])> {
         let wrapped = hex_decode(&self.wrapped_content_key)?;
-        let content_key_vec = aead::open(data_key, AAD_CONTENT_KEY_WRAP, &wrapped)
-            .map_err(|_| OmpError::Unauthorized(
-                "unable to unwrap content key (wrong key or tampered envelope)".into()
-            ))?;
-        let content_key: [u8; 32] = content_key_vec
-            .as_slice()
-            .try_into()
-            .map_err(|_| OmpError::Corrupt(format!(
+        let content_key_vec =
+            aead::open(data_key, AAD_CONTENT_KEY_WRAP, &wrapped).map_err(|_| {
+                OmpError::Unauthorized(
+                    "unable to unwrap content key (wrong key or tampered envelope)".into(),
+                )
+            })?;
+        let content_key: [u8; 32] = content_key_vec.as_slice().try_into().map_err(|_| {
+            OmpError::Corrupt(format!(
                 "wrapped content key has wrong length: {}",
                 content_key_vec.len()
-            )))?;
+            ))
+        })?;
 
         let sealed = hex_decode(&self.sealed_body)?;
-        let body_bytes = aead::open(manifest_key, AAD_MANIFEST, &sealed)
-            .map_err(|_| OmpError::Unauthorized(
-                "unable to open manifest body (wrong key or tampered envelope)".into()
-            ))?;
+        let body_bytes = aead::open(manifest_key, AAD_MANIFEST, &sealed).map_err(|_| {
+            OmpError::Unauthorized(
+                "unable to open manifest body (wrong key or tampered envelope)".into(),
+            )
+        })?;
         let manifest = Manifest::parse(&body_bytes)?;
         Ok((manifest, content_key))
     }
@@ -148,13 +140,8 @@ mod tests {
         let manifest_key = [0xaau8; 32];
         let data_key = [0x77u8; 32];
 
-        let bytes = EncryptedManifestEnvelope::seal(
-            &m,
-            &content_key,
-            &manifest_key,
-            &data_key,
-        )
-        .unwrap();
+        let bytes =
+            EncryptedManifestEnvelope::seal(&m, &content_key, &manifest_key, &data_key).unwrap();
         let env = EncryptedManifestEnvelope::parse(&bytes).unwrap();
         let (back, key) = env.open(&manifest_key, &data_key).unwrap();
         assert_eq!(back, m);
@@ -164,13 +151,8 @@ mod tests {
     #[test]
     fn wrong_manifest_key_fails_with_unauthorized() {
         let m = minimal_manifest();
-        let bytes = EncryptedManifestEnvelope::seal(
-            &m,
-            &[0u8; 32],
-            &[1u8; 32],
-            &[2u8; 32],
-        )
-        .unwrap();
+        let bytes =
+            EncryptedManifestEnvelope::seal(&m, &[0u8; 32], &[1u8; 32], &[2u8; 32]).unwrap();
         let env = EncryptedManifestEnvelope::parse(&bytes).unwrap();
         let err = env.open(&[99u8; 32], &[2u8; 32]).unwrap_err();
         assert!(matches!(err, OmpError::Unauthorized(_)));
@@ -179,13 +161,8 @@ mod tests {
     #[test]
     fn wrong_data_key_fails_with_unauthorized() {
         let m = minimal_manifest();
-        let bytes = EncryptedManifestEnvelope::seal(
-            &m,
-            &[0u8; 32],
-            &[1u8; 32],
-            &[2u8; 32],
-        )
-        .unwrap();
+        let bytes =
+            EncryptedManifestEnvelope::seal(&m, &[0u8; 32], &[1u8; 32], &[2u8; 32]).unwrap();
         let env = EncryptedManifestEnvelope::parse(&bytes).unwrap();
         let err = env.open(&[1u8; 32], &[99u8; 32]).unwrap_err();
         assert!(matches!(err, OmpError::Unauthorized(_)));
@@ -199,13 +176,8 @@ mod tests {
         // outer bytes.
         let mut m = minimal_manifest();
         m.file_type = "unique-plaintext-marker-x7q2".into();
-        let bytes = EncryptedManifestEnvelope::seal(
-            &m,
-            &[0u8; 32],
-            &[1u8; 32],
-            &[2u8; 32],
-        )
-        .unwrap();
+        let bytes =
+            EncryptedManifestEnvelope::seal(&m, &[0u8; 32], &[1u8; 32], &[2u8; 32]).unwrap();
         let s = std::str::from_utf8(&bytes).unwrap();
         assert!(
             !s.contains("unique-plaintext-marker-x7q2"),
@@ -217,20 +189,8 @@ mod tests {
     fn different_seals_produce_different_ciphertext() {
         // Fresh nonces each seal → outputs differ even with identical keys.
         let m = minimal_manifest();
-        let a = EncryptedManifestEnvelope::seal(
-            &m,
-            &[0u8; 32],
-            &[1u8; 32],
-            &[2u8; 32],
-        )
-        .unwrap();
-        let b = EncryptedManifestEnvelope::seal(
-            &m,
-            &[0u8; 32],
-            &[1u8; 32],
-            &[2u8; 32],
-        )
-        .unwrap();
+        let a = EncryptedManifestEnvelope::seal(&m, &[0u8; 32], &[1u8; 32], &[2u8; 32]).unwrap();
+        let b = EncryptedManifestEnvelope::seal(&m, &[0u8; 32], &[1u8; 32], &[2u8; 32]).unwrap();
         assert_ne!(a, b);
     }
 }

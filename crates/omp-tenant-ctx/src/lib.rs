@@ -168,17 +168,13 @@ impl TenantContext {
         let buf = base64::engine::general_purpose::STANDARD
             .decode(s)
             .map_err(|e| CtxError::Base64(e.to_string()))?;
-        let ctx: TenantContext = ciborium::de::from_reader(&buf[..])
-            .map_err(|e| CtxError::Cbor(e.to_string()))?;
+        let ctx: TenantContext =
+            ciborium::de::from_reader(&buf[..]).map_err(|e| CtxError::Cbor(e.to_string()))?;
         Ok(ctx)
     }
 
     /// Decode + verify the signature + check expiry against `now_unix`.
-    pub fn verify_at(
-        s: &str,
-        verifier: &VerifyingKey,
-        now_unix: i64,
-    ) -> Result<Self, CtxError> {
+    pub fn verify_at(s: &str, verifier: &VerifyingKey, now_unix: i64) -> Result<Self, CtxError> {
         let ctx = Self::decode_unverified(s)?;
         if ctx.signature.is_empty() {
             return Err(CtxError::MissingSignature);
@@ -187,8 +183,7 @@ impl TenantContext {
             return Err(CtxError::Expired(ctx.exp_unix, now_unix));
         }
         let signed = canonical_signed_bytes(&ctx)?;
-        let sig = Signature::from_slice(&ctx.signature)
-            .map_err(|_| CtxError::BadSignature)?;
+        let sig = Signature::from_slice(&ctx.signature).map_err(|_| CtxError::BadSignature)?;
         verifier
             .verify(&signed, &sig)
             .map_err(|_| CtxError::BadSignature)?;
@@ -217,8 +212,7 @@ fn canonical_signed_bytes(ctx: &TenantContext) -> Result<Vec<u8>, CtxError> {
         exp_unix: ctx.exp_unix,
     };
     let mut out = Vec::new();
-    ciborium::ser::into_writer(&body, &mut out)
-        .map_err(|e| CtxError::CborEncode(e.to_string()))?;
+    ciborium::ser::into_writer(&body, &mut out).map_err(|e| CtxError::CborEncode(e.to_string()))?;
     Ok(out)
 }
 

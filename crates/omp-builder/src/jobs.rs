@@ -129,7 +129,12 @@ impl JobsTable {
         }
     }
 
-    pub fn create(&self, tenant: String, namespace: String, name: String) -> (JobId, broadcast::Sender<String>) {
+    pub fn create(
+        &self,
+        tenant: String,
+        namespace: String,
+        name: String,
+    ) -> (JobId, broadcast::Sender<String>) {
         let id = JobId::fresh();
         let (tx, _rx) = broadcast::channel::<String>(256);
         let now = now_iso();
@@ -213,10 +218,7 @@ fn now_iso() -> String {
         .unwrap_or_default();
     // ISO-8601 to second precision. The cli/tracing crates already use
     // RFC3339 elsewhere; we don't need a full date library here.
-    format!(
-        "{}",
-        chrono_secs_to_iso(dur.as_secs() as i64)
-    )
+    format!("{}", chrono_secs_to_iso(dur.as_secs() as i64))
 }
 
 /// Format an i64 seconds-since-epoch as `YYYY-MM-DDTHH:MM:SSZ`. Pure-Rust
@@ -262,7 +264,9 @@ mod tests {
     fn create_and_view_round_trip() {
         let table = JobsTable::new();
         let (id, _tx) = table.create("alice".into(), "text".into(), "is_test".into());
-        let view = table.view(&id, "alice").expect("alice can read alice's job");
+        let view = table
+            .view(&id, "alice")
+            .expect("alice can read alice's job");
         assert_eq!(view.namespace, "text");
         assert_eq!(view.name, "is_test");
         assert_eq!(view.state, JobState::Queued);

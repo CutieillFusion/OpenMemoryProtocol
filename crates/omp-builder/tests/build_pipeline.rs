@@ -98,7 +98,10 @@ async fn build_compiles_a_real_probe_to_wasm() {
         .unwrap();
     assert_eq!(resp.status(), 202, "expected 202 accepted");
     let body: Value = resp.json().await.unwrap();
-    let job_id = body["job_id"].as_str().expect("job_id in 202 body").to_string();
+    let job_id = body["job_id"]
+        .as_str()
+        .expect("job_id in 202 body")
+        .to_string();
 
     // Poll until terminal.
     let deadline = std::time::Instant::now() + Duration::from_secs(240);

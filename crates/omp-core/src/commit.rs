@@ -79,10 +79,7 @@ impl Commit {
     /// plaintext body; `Some(commit_key)` seals the message body under
     /// ChaCha20-Poly1305 with a deterministic nonce derived from the key
     /// and the message bytes, keeping re-serialization byte-stable.
-    pub fn serialize_with_commit_key(
-        &self,
-        commit_key: Option<&[u8; 32]>,
-    ) -> Result<Vec<u8>> {
+    pub fn serialize_with_commit_key(&self, commit_key: Option<&[u8; 32]>) -> Result<Vec<u8>> {
         let mut out = String::new();
         out.push_str("tree ");
         out.push_str(&self.tree.hex());
@@ -105,13 +102,8 @@ impl Commit {
             Some(key) => {
                 let msg = self.message.trim_end_matches('\n');
                 let nonce = crate::keys::derive_nonce(key, b"commit-msg", msg.as_bytes())?;
-                let sealed = omp_crypto::aead::seal(
-                    key,
-                    &nonce,
-                    COMMIT_MSG_AAD,
-                    msg.as_bytes(),
-                )
-                .map_err(|e| OmpError::internal(format!("seal commit message: {e}")))?;
+                let sealed = omp_crypto::aead::seal(key, &nonce, COMMIT_MSG_AAD, msg.as_bytes())
+                    .map_err(|e| OmpError::internal(format!("seal commit message: {e}")))?;
                 out.push_str(ENCRYPTED_MESSAGE_PREFIX);
                 out.push_str(&crate::share::hex_encode(&sealed));
                 out.push('\n');
@@ -124,10 +116,7 @@ impl Commit {
         Self::parse_with_commit_key(bytes, None)
     }
 
-    pub fn parse_with_commit_key(
-        bytes: &[u8],
-        commit_key: Option<&[u8; 32]>,
-    ) -> Result<Self> {
+    pub fn parse_with_commit_key(bytes: &[u8], commit_key: Option<&[u8; 32]>) -> Result<Self> {
         let s = std::str::from_utf8(bytes)
             .map_err(|_| OmpError::Corrupt("commit is not UTF-8".into()))?;
 
@@ -165,7 +154,8 @@ impl Commit {
         let body = &s[header_bytes_consumed..];
         let body_trimmed = body.trim_end_matches('\n');
 
-        let message = if let Some(hex_sealed) = body_trimmed.strip_prefix(ENCRYPTED_MESSAGE_PREFIX) {
+        let message = if let Some(hex_sealed) = body_trimmed.strip_prefix(ENCRYPTED_MESSAGE_PREFIX)
+        {
             let key = commit_key.ok_or_else(|| {
                 OmpError::Unauthorized(
                     "commit message is encrypted but no commit_key supplied".into(),
@@ -177,9 +167,8 @@ impl Commit {
                     "commit message did not open (wrong commit_key or tampered)".into(),
                 )
             })?;
-            String::from_utf8(opened).map_err(|_| {
-                OmpError::Corrupt("decrypted commit message is not UTF-8".into())
-            })?
+            String::from_utf8(opened)
+                .map_err(|_| OmpError::Corrupt("decrypted commit message is not UTF-8".into()))?
         } else {
             body_trimmed.to_string()
         };
@@ -192,7 +181,6 @@ impl Commit {
         })
     }
 }
-
 
 #[cfg(test)]
 mod tests {

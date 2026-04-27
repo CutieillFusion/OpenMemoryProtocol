@@ -229,14 +229,11 @@ mod tests {
         let mut sub = bus.subscribe();
 
         let cases: Vec<(&str, Vec<u8>)> = vec![
-            (
-                event_type::COMMIT_CREATED,
-                {
-                    let mut b = Vec::new();
-                    CommitCreated::default().encode(&mut b).unwrap();
-                    b
-                },
-            ),
+            (event_type::COMMIT_CREATED, {
+                let mut b = Vec::new();
+                CommitCreated::default().encode(&mut b).unwrap();
+                b
+            }),
             (event_type::REF_UPDATED, {
                 let mut b = Vec::new();
                 RefUpdated::default().encode(&mut b).unwrap();
@@ -306,6 +303,9 @@ mod tests {
 
         // No new event published — late.next() should not see the earlier one.
         let timeout = tokio::time::timeout(std::time::Duration::from_millis(80), late.next()).await;
-        assert!(timeout.is_err(), "late subscriber should not see prior event");
+        assert!(
+            timeout.is_err(),
+            "late subscriber should not see prior event"
+        );
     }
 }

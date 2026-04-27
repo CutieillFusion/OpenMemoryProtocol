@@ -96,15 +96,13 @@ async fn encrypted_tenant_rejects_test_ingest() {
     let td = TempDir::new().unwrap();
     let (base, token) = spawn_encrypted_tenant(&td).await;
 
-    let form = reqwest::multipart::Form::new()
-        .text("path", "a.txt")
-        .part(
-            "file",
-            reqwest::multipart::Part::bytes(b"x".to_vec())
-                .file_name("f")
-                .mime_str("text/plain")
-                .unwrap(),
-        );
+    let form = reqwest::multipart::Form::new().text("path", "a.txt").part(
+        "file",
+        reqwest::multipart::Part::bytes(b"x".to_vec())
+            .file_name("f")
+            .mime_str("text/plain")
+            .unwrap(),
+    );
     let r = reqwest::Client::new()
         .post(format!("{base}/test/ingest"))
         .bearer_auth(&token)

@@ -77,11 +77,8 @@ fn show_falls_back_to_binary_when_schema_missing() {
 
     // Now stage a delete of the schema, commit again.
     repo.remove("schemas/text.schema").unwrap();
-    repo.commit(
-        "drop schema",
-        Some(fixed_author_at("2026-04-22T01:00:00Z")),
-    )
-    .unwrap();
+    repo.commit("drop schema", Some(fixed_author_at("2026-04-22T01:00:00Z")))
+        .unwrap();
 
     // The manifest still references file_type="text", but the schema has
     // been removed at HEAD. show() must not error — it falls back to Binary.
@@ -143,7 +140,11 @@ type = "string"
     let now = repo.show("a.md", None).unwrap();
     match now {
         ShowResult::Manifest { render, .. } => {
-            assert_eq!(render.kind, RenderKind::Markdown, "HEAD should use v2 schema");
+            assert_eq!(
+                render.kind,
+                RenderKind::Markdown,
+                "HEAD should use v2 schema"
+            );
         }
         other => panic!("unexpected: {other:?}"),
     }

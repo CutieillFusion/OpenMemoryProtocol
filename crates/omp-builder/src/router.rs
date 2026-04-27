@@ -74,17 +74,22 @@ async fn post_build(
 ) -> impl IntoResponse {
     let tenant = match resolve_tenant(&headers) {
         Some(t) => t,
-        None => return error_response(StatusCode::UNAUTHORIZED, "unauthorized", "missing tenant context"),
+        None => {
+            return error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "missing tenant context",
+            )
+        }
     };
 
     if let Err(msg) = validate(&body) {
         return error_response(StatusCode::BAD_REQUEST, "bad_request", &msg);
     }
 
-    let (id, _tx) =
-        state
-            .jobs
-            .create(tenant.clone(), body.namespace.clone(), body.name.clone());
+    let (id, _tx) = state
+        .jobs
+        .create(tenant.clone(), body.namespace.clone(), body.name.clone());
     let req = BuildRequest {
         tenant,
         namespace: body.namespace,
@@ -119,10 +124,7 @@ fn validate(body: &PostBuildBody) -> Result<(), String> {
     }
     const MAX_SOURCE_BYTES: usize = 1024 * 1024; // 1 MiB
     if body.lib_rs.len() > MAX_SOURCE_BYTES {
-        return Err(format!(
-            "lib.rs exceeds {} bytes",
-            MAX_SOURCE_BYTES
-        ));
+        return Err(format!("lib.rs exceeds {} bytes", MAX_SOURCE_BYTES));
     }
     if body.probe_toml.len() > 16 * 1024 {
         return Err("probe.toml exceeds 16 KiB".into());
@@ -143,10 +145,20 @@ async fn get_build(
 ) -> impl IntoResponse {
     let tenant = match resolve_tenant(&headers) {
         Some(t) => t,
-        None => return error_response(StatusCode::UNAUTHORIZED, "unauthorized", "missing tenant context"),
+        None => {
+            return error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "missing tenant context",
+            )
+        }
     };
     match state.jobs.view(&JobId(id), &tenant) {
-        Some(view) => (StatusCode::OK, Json(serde_json::to_value(view).unwrap_or_default())).into_response(),
+        Some(view) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(view).unwrap_or_default()),
+        )
+            .into_response(),
         None => error_response(StatusCode::NOT_FOUND, "not_found", "no such job"),
     }
 }
@@ -158,7 +170,13 @@ async fn delete_build(
 ) -> impl IntoResponse {
     let tenant = match resolve_tenant(&headers) {
         Some(t) => t,
-        None => return error_response(StatusCode::UNAUTHORIZED, "unauthorized", "missing tenant context"),
+        None => {
+            return error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "missing tenant context",
+            )
+        }
     };
     if state.jobs.delete(&JobId(id), &tenant) {
         StatusCode::NO_CONTENT.into_response()
@@ -174,7 +192,13 @@ async fn get_build_log(
 ) -> impl IntoResponse {
     let tenant = match resolve_tenant(&headers) {
         Some(t) => t,
-        None => return error_response(StatusCode::UNAUTHORIZED, "unauthorized", "missing tenant context"),
+        None => {
+            return error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "missing tenant context",
+            )
+        }
     };
     let job_id = JobId(id);
     let (replay, rx) = match state.jobs.subscribe_log(&job_id, &tenant) {
@@ -199,7 +223,9 @@ async fn get_build_log(
     let combined: Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> =
         Box::pin(replay_stream.chain(live_stream));
 
-    Sse::new(combined).keep_alive(KeepAlive::default()).into_response()
+    Sse::new(combined)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 /// Read the tenant id from `X-OMP-Tenant-Context` (signed CBOR) or, in dev
@@ -229,11 +255,7 @@ fn resolve_tenant(headers: &HeaderMap) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn error_response(
-    status: StatusCode,
-    code: &str,
-    message: &str,
-) -> axum::response::Response {
+fn error_response(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
     (
         status,
         Json(serde_json::json!({

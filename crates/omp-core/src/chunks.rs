@@ -58,9 +58,9 @@ impl ChunksBody {
                     i + 1
                 ))
             })?;
-            let hash: Hash = hash_part.parse().map_err(|e| {
-                OmpError::Corrupt(format!("chunks body line {}: {e}", i + 1))
-            })?;
+            let hash: Hash = hash_part
+                .parse()
+                .map_err(|e| OmpError::Corrupt(format!("chunks body line {}: {e}", i + 1)))?;
             let length: u64 = len_part.parse().map_err(|_| {
                 OmpError::Corrupt(format!(
                     "chunks body line {}: bad length {len_part:?}",
@@ -95,9 +95,18 @@ mod tests {
     #[test]
     fn three_entries_roundtrip() {
         let body = ChunksBody::new(vec![
-            ChunkEntry { hash: Hash::of(b"a"), length: 16_777_216 },
-            ChunkEntry { hash: Hash::of(b"b"), length: 16_777_216 },
-            ChunkEntry { hash: Hash::of(b"c"), length: 4_215_603 },
+            ChunkEntry {
+                hash: Hash::of(b"a"),
+                length: 16_777_216,
+            },
+            ChunkEntry {
+                hash: Hash::of(b"b"),
+                length: 16_777_216,
+            },
+            ChunkEntry {
+                hash: Hash::of(b"c"),
+                length: 4_215_603,
+            },
         ]);
         let bytes = body.serialize();
         let s = std::str::from_utf8(&bytes).unwrap();
@@ -111,8 +120,14 @@ mod tests {
         let h1 = Hash::of(b"z");
         let h2 = Hash::of(b"a");
         let body = ChunksBody::new(vec![
-            ChunkEntry { hash: h1, length: 1 },
-            ChunkEntry { hash: h2, length: 2 },
+            ChunkEntry {
+                hash: h1,
+                length: 1,
+            },
+            ChunkEntry {
+                hash: h2,
+                length: 2,
+            },
         ]);
         let bytes = body.serialize();
         let s = std::str::from_utf8(&bytes).unwrap();

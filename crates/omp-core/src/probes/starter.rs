@@ -9,7 +9,7 @@
 /// A single starter probe — its namespace-qualified name plus the two blobs
 /// that belong in the tree.
 pub struct StarterProbe {
-    pub name: &'static str,   // "file.size", "text.frontmatter", …
+    pub name: &'static str, // "file.size", "text.frontmatter", …
     pub namespace: &'static str,
     pub basename: &'static str, // the bit after the dot: "size", "frontmatter"
     pub wasm: &'static [u8],
@@ -31,16 +31,8 @@ macro_rules! probe {
             name: $name,
             namespace: $ns,
             basename: $base,
-            wasm: include_bytes!(concat!(
-                "../../build/wasm/",
-                $name,
-                ".wasm"
-            )),
-            manifest_toml: include_bytes!(concat!(
-                "../../starter-probes/",
-                $name,
-                ".probe.toml"
-            )),
+            wasm: include_bytes!(concat!("../../build/wasm/", $name, ".wasm")),
+            manifest_toml: include_bytes!(concat!("../../starter-probes/", $name, ".probe.toml")),
         }
     };
 }

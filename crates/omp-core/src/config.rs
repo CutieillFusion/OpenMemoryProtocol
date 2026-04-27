@@ -143,8 +143,8 @@ impl RepoConfig {
 
         let s = std::str::from_utf8(bytes)
             .map_err(|_| OmpError::SchemaValidation("omp.toml not UTF-8".into()))?;
-        let raw: Raw = toml::from_str(s)
-            .map_err(|e| OmpError::SchemaValidation(format!("omp.toml: {e}")))?;
+        let raw: Raw =
+            toml::from_str(s).map_err(|e| OmpError::SchemaValidation(format!("omp.toml: {e}")))?;
 
         let mut cfg = Self::default();
         if let Some(i) = raw.ingest {
@@ -358,10 +358,7 @@ fuel = 500000000
 wall_clock_s = 5
 "#;
         let c = RepoConfig::parse(input.as_bytes()).unwrap();
-        assert_eq!(
-            c.ingest.default_schema_policy,
-            DefaultSchemaPolicy::Minimal
-        );
+        assert_eq!(c.ingest.default_schema_policy, DefaultSchemaPolicy::Minimal);
         assert!(c.ingest.allow_blob_fallback);
         assert_eq!(c.workdir.ignore, vec!["*.bak"]);
         assert!(c.workdir.follow_symlinks);
