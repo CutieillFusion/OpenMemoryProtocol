@@ -53,12 +53,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: Download UI bundle
         uses: actions/download-artifact@v4
         with:
           name: frontend-build
           path: frontend/build
+      - name: Build starter-pack wasm probes
+        run: ./scripts/build-probes.sh
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
@@ -71,12 +74,16 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: Download UI bundle
         uses: actions/download-artifact@v4
         with:
           name: frontend-build
           path: frontend/build
+      - name: Build starter-pack wasm probes
+        run: ./scripts/build-probes.sh
       - run: cargo test --workspace --all-targets
       # Sanity: gateway also builds without the embedded UI, so backend-only
       # contributors (no Node) aren't blocked by the default feature.
