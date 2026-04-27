@@ -3,7 +3,6 @@ target/
 .github/
 docs/
 charts/
-scripts/
 *.log
 **/*.bk
 .idea/
