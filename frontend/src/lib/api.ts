@@ -135,29 +135,60 @@ export const status = (signal?: AbortSignal) =>
 export const health = (signal?: AbortSignal) =>
   request<{ ok: boolean; service?: string }>('/healthz', { signal, noAuth: true });
 
+export interface MeResponse {
+  tenant: string;
+  sub: string;
+  email: string | null;
+  email_verified: boolean | null;
+  first_name: string | null;
+  last_name: string | null;
+  profile_picture_url: string | null;
+}
+
+/**
+ * Fetch the WorkOS profile of the current session. Only meaningful in
+ * `'session'` mode; returns 401 / 404 in other modes.
+ */
+export const getMe = (signal?: AbortSignal) =>
+  request<MeResponse>('/auth/me', { signal });
+
 export const listFiles = (params: { at?: string; prefix?: string; verbose?: boolean } = {}, signal?: AbortSignal) =>
   request<FileListing[]>('/files', { query: params, signal });
 
-export const getFile = (path: string, params: { at?: string; verbose?: boolean } = {}, signal?: AbortSignal) =>
+export const getFile = (
+  path: string,
+  params: { at?: string; verbose?: boolean; staged?: boolean } = {},
+  signal?: AbortSignal
+) =>
   request<Manifest | TreeEntry[] | BlobInfo>(
     `/files/${encodePath(path)}`,
-    { query: params, signal }
+    { query: params as Record<string, string | number | boolean | undefined | null>, signal }
   );
 
-export const getBytesUrl = (path: string, params: { at?: string } = {}): string => {
+export const getBytesUrl = (path: string, params: { at?: string; staged?: boolean } = {}): string => {
   const base = `/bytes/${encodePath(path)}`;
-  if (!params.at) return base;
-  const sp = new URLSearchParams({ at: params.at });
-  return `${base}?${sp.toString()}`;
+  const sp = new URLSearchParams();
+  if (params.staged) sp.append('staged', 'true');
+  else if (params.at) sp.append('at', params.at);
+  const qs = sp.toString();
+  return qs ? `${base}?${qs}` : base;
 };
 
-export const fetchBytes = async (path: string, params: { at?: string } = {}, signal?: AbortSignal): Promise<Response> => {
+export const fetchBytes = async (
+  path: string,
+  params: { at?: string; staged?: boolean } = {},
+  signal?: AbortSignal
+): Promise<Response> => {
   const headers: Record<string, string> = {};
   if (storeGet(auth).mode !== 'session') {
     const tok = getToken();
     if (tok) headers['Authorization'] = `Bearer ${tok}`;
   }
-  const resp = await fetch(getBytesUrl(path, params), { headers, signal, credentials: 'same-origin' });
+  const resp = await fetch(getBytesUrl(path, params), {
+    headers,
+    signal,
+    credentials: 'same-origin'
+  });
   if (!resp.ok) await throwFromResponse(resp);
   return resp;
 };
@@ -173,7 +204,7 @@ export const fetchBytes = async (path: string, params: { at?: string } = {}, sig
  */
 export const fetchBytesAsBlobUrl = async (
   path: string,
-  params: { at?: string } = {},
+  params: { at?: string; staged?: boolean } = {},
   signal?: AbortSignal
 ): Promise<{ url: string; revoke: () => void }> => {
   const resp = await fetchBytes(path, params, signal);
@@ -198,11 +229,14 @@ export const deleteFile = (path: string, signal?: AbortSignal) =>
 
 export const getTree = (
   path: string = '',
-  params: { at?: string; recursive?: boolean; verbose?: boolean } = {},
+  params: { at?: string; recursive?: boolean; verbose?: boolean; staged?: boolean } = {},
   signal?: AbortSignal
 ) => {
   const url = path ? `/tree/${encodePath(path)}` : '/tree';
-  return request<TreeEntry[]>(url, { query: params, signal });
+  return request<TreeEntry[]>(url, {
+    query: params as Record<string, string | number | boolean | undefined | null>,
+    signal
+  });
 };
 
 export const commit = (
@@ -352,6 +386,99 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
   for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i);
   return buf;
 }
+
+// ---- Marketplace (doc 23) ----
+
+export interface MarketplaceProbe {
+  id: string;
+  publisher_sub: string;
+  namespace: string;
+  name: string;
+  version: string;
+  description: string | null;
+  wasm_hash: string;
+  manifest_hash: string;
+  readme_hash: string | null;
+  source_hash: string | null;
+  published_at: number;
+  yanked_at: number | null;
+  downloads: number;
+}
+
+export const listMarketplaceProbes = (
+  params: { namespace?: string; name?: string; q?: string; limit?: number } = {},
+  signal?: AbortSignal
+) =>
+  request<{ probes: MarketplaceProbe[] }>('/marketplace/probes', {
+    query: params,
+    signal
+  });
+
+export const getMarketplaceProbe = (id: string, signal?: AbortSignal) =>
+  request<{ probe: MarketplaceProbe; manifest_preview: string | null }>(
+    `/marketplace/probes/${encodeURIComponent(id)}`,
+    { signal }
+  );
+
+export const installMarketplaceProbe = (id: string, signal?: AbortSignal) =>
+  request<{ ok: boolean; namespace: string; name: string; staged: unknown[] }>(
+    `/marketplace/install/${encodeURIComponent(id)}`,
+    { method: 'POST', signal }
+  );
+
+export const yankMarketplaceProbe = (id: string, signal?: AbortSignal) =>
+  request<{ ok: boolean; already_yanked?: boolean }>(
+    `/marketplace/probes/${encodeURIComponent(id)}`,
+    { method: 'DELETE', signal }
+  );
+
+export const publishMarketplaceProbe = async (
+  body: {
+    namespace: string;
+    name: string;
+    version: string;
+    description?: string;
+    wasm: Blob;
+    manifest: Blob;
+    readme?: Blob;
+    source?: Blob;
+  },
+  signal?: AbortSignal
+): Promise<{ probe: MarketplaceProbe }> => {
+  const fd = new FormData();
+  fd.append('namespace', body.namespace);
+  fd.append('name', body.name);
+  fd.append('version', body.version);
+  if (body.description) fd.append('description', body.description);
+  fd.append('wasm', body.wasm, 'probe.wasm');
+  fd.append('manifest', body.manifest, 'probe.toml');
+  if (body.readme) fd.append('readme', body.readme, 'README.md');
+  if (body.source) fd.append('source', body.source, 'lib.rs');
+  return request<{ probe: MarketplaceProbe }>('/marketplace/probes', {
+    method: 'POST',
+    body: fd,
+    signal
+  });
+};
+
+/**
+ * Fetch a single blob (probe.wasm, probe.toml, README.md, or source) by its
+ * sha256 hash. The marketplace returns raw bytes; callers that want text
+ * should call `.text()` on the Response. Used by the probe detail page to
+ * render manifest / README / source.
+ */
+export const fetchMarketplaceBlob = async (
+  id: string,
+  hash: string,
+  signal?: AbortSignal
+): Promise<Response> => {
+  const path = `/marketplace/probes/${encodeURIComponent(id)}/blobs/${encodeURIComponent(hash)}`;
+  const resp = await fetch(path, { signal, credentials: 'same-origin' });
+  if (!resp.ok) {
+    throw new ApiError(resp.status, 'blob_fetch', `${resp.status} ${resp.statusText}`);
+  }
+  return resp;
+};
 
 // ---- helpers ----
 

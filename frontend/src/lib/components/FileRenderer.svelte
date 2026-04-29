@@ -12,6 +12,8 @@
   export let at: string = '';
   /** Schema-driven render hint from `GET /files/{path}`. */
   export let render: RenderHint;
+  /** When true, fetch bytes from the staging index (not committed yet). */
+  export let staged: boolean = false;
 
   const DEFAULT_CAP = 64 * 1024;
 
@@ -32,7 +34,7 @@
   let imageUrl: string | null = null;
   let imageRevoke: (() => void) | null = null;
 
-  $: byteParams = at ? { at } : {};
+  $: byteParams = staged ? { staged: true } : at ? { at } : {};
 
   // Re-fetch whenever path/at/kind changes.
   $: void load(path, at, render.kind, cap);

@@ -29,6 +29,7 @@ Start with the overview, then read the technical docs in order — each builds o
 21. [**20-server-side-probes.md**](./20-server-side-probes.md) — Tenants POST Rust probe source through the UI; new `omp-builder` microservice compiles in a sandboxed environment with a vendored dep whitelist; output `.wasm` plus source land in the tree as a normal commit. Also wires the engine to actually load probes from the tree at ingest (a prerequisite gap closed in the same change).
 22. [**21-schema-reprobe.md**](./21-schema-reprobe.md) — A schema commit auto-rebuilds every existing manifest of that file_type in the same atomic commit, so newly-added fields populate retroactively. Field-level reuse + per-pass probe-output cache keep the cost proportional to *what changed*, not to total schema size; per-file failures isolate from the commit.
 23. [**22-workos-auth.md**](./22-workos-auth.md) — WorkOS AuthKit as the user-facing auth path alongside the existing Bearer-token registry; `organization_id` becomes `tenant_id` 1:1; sessions are Ed25519-signed cookies (no DB, no JWT lib); CLI and machine clients unchanged. Supersedes the "no OAuth" non-goal in docs 11 and 19 for browser users.
+24. [**23-probe-marketplace.md**](./23-probe-marketplace.md) — Hard cutover to a per-probe folder layout (`probes/<ns>/<name>/{probe.wasm,probe.toml,README.md,source/}`) and a separate `omp-marketplace` microservice for publish / browse / install. Layout lands as code; marketplace itself is a design commitment with the API contract pinned.
 
 ## How to give feedback
 

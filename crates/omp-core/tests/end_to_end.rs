@@ -23,13 +23,14 @@ fn init_drops_starter_pack() {
     assert!(td.path().join("omp.toml").exists());
     // The v1 starter pack is the three `file.*` probes.
     for basename in ["size", "mime", "sha256"] {
+        // Per-probe folder layout (doc 23).
         assert!(td
             .path()
-            .join(format!("probes/file/{basename}.wasm"))
+            .join(format!("probes/file/{basename}/probe.wasm"))
             .exists());
         assert!(td
             .path()
-            .join(format!("probes/file/{basename}.probe.toml"))
+            .join(format!("probes/file/{basename}/probe.toml"))
             .exists());
     }
     // No text/pdf/image/audio probes in the starter pack.

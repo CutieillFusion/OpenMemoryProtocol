@@ -1911,6 +1911,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "omp-marketplace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "clap",
+ "ed25519-dalek",
+ "fs2",
+ "omp-tenant-ctx",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tower 0.5.3",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "omp-proto"
 version = "0.1.0"
 dependencies = [

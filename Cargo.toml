@@ -9,6 +9,7 @@ members = [
     "crates/omp-events",
     "crates/omp-gateway",
     "crates/omp-builder",
+    "crates/omp-marketplace",
     "crates/omp-store",
     "crates/omp-store-client",
     "crates/omp-tenant-ctx",

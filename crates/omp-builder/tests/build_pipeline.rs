@@ -140,15 +140,15 @@ async fn build_compiles_a_real_probe_to_wasm() {
         .iter()
         .filter_map(|a| a["path"].as_str())
         .collect();
-    assert!(paths.contains(&"probes/text/is_test_string.wasm"));
-    assert!(paths.contains(&"probes/text/is_test_string.probe.toml"));
-    assert!(paths.contains(&"probes/text/is_test_string.rs"));
+    assert!(paths.contains(&"probes/text/is_test_string/probe.wasm"));
+    assert!(paths.contains(&"probes/text/is_test_string/probe.toml"));
+    assert!(paths.contains(&"probes/text/is_test_string/source/lib.rs"));
 
     // Check the wasm artifact has the right magic header (\0asm).
     use base64::Engine;
     let wasm_b64 = artifacts
         .iter()
-        .find(|a| a["path"].as_str() == Some("probes/text/is_test_string.wasm"))
+        .find(|a| a["path"].as_str() == Some("probes/text/is_test_string/probe.wasm"))
         .unwrap()["bytes_b64"]
         .as_str()
         .unwrap();

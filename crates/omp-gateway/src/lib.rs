@@ -20,7 +20,7 @@ use axum::{
     extract::{Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::{any, get},
+    routing::{any, get, post},
     Router,
 };
 use omp_core::registry::hash_token;
@@ -53,6 +53,14 @@ pub struct GatewayConfig {
     /// `503 builder_unavailable`. See `docs/design/20-server-side-probes.md`.
     #[serde(default)]
     pub builder: Option<String>,
+    /// Optional `omp-marketplace` URL. Same pattern as `builder`. When set,
+    /// `/marketplace/probes*` routes there; `/marketplace/install/<id>` is a
+    /// gateway-owned endpoint that pulls blobs from the marketplace and
+    /// stages them on the caller's shard. When unset, `/marketplace/*`
+    /// returns `503 marketplace_unavailable`. See
+    /// `docs/design/23-probe-marketplace.md`.
+    #[serde(default)]
+    pub marketplace: Option<String>,
     /// Optional WorkOS / generic-OIDC config. When `None`, the gateway
     /// behaves identically to the pre-WorkOS design — only Bearer tokens are
     /// resolved, no `/auth/*` routes are mounted. See
@@ -66,6 +74,15 @@ impl GatewayConfig {
         let s = std::fs::read_to_string(p)?;
         Ok(toml::from_str(&s)?)
     }
+}
+
+/// Resolved auth identity for a request. `tenant` is mandatory; `sub` is
+/// the WorkOS user id when the request was authenticated via the session
+/// cookie path, and `None` for Bearer token / machine clients.
+#[derive(Debug, Clone)]
+pub struct Principal {
+    pub tenant: String,
+    pub sub: Option<String>,
 }
 
 #[derive(Clone)]
@@ -104,10 +121,23 @@ impl GatewayState {
     /// path runs second so a stale token never overrides a live session
     /// (per `docs/design/22-workos-auth.md` §`resolve_tenant`).
     pub fn resolve_tenant(&self, headers: &HeaderMap) -> Option<String> {
+        self.resolve_principal(headers).map(|p| p.tenant)
+    }
+
+    /// Resolve to the full principal: tenant id + optional WorkOS user id.
+    /// `sub` is `Some` only on the cookie path (WorkOS); Bearer machine
+    /// clients have no associated user identity so it stays `None`.
+    pub fn resolve_principal(&self, headers: &HeaderMap) -> Option<Principal> {
         if let Some(claims) = auth::resolve_session_cookie(headers, &self.signer.verifying_key()) {
-            return Some(claims.tenant);
+            return Some(Principal {
+                tenant: claims.tenant,
+                sub: Some(claims.sub),
+            });
         }
-        self.resolve_bearer_token(headers)
+        self.resolve_bearer_token(headers).map(|tenant| Principal {
+            tenant,
+            sub: None,
+        })
     }
 
     /// Resolve a Bearer token to a tenant id, if recognized.
@@ -170,7 +200,16 @@ pub fn router(state: GatewayState) -> Router {
             .route("/auth/login", get(auth::login))
             .route("/auth/callback", get(auth::callback))
             .route("/auth/refresh", get(auth::refresh))
+            .route("/auth/me", get(auth::me))
             .route("/auth/logout", get(auth::logout).post(auth::logout));
+    }
+
+    // Marketplace install endpoint: gateway-owned (not proxied), so the
+    // marketplace stays stateless about consumer tenants. Pulls blobs from
+    // the marketplace and stages them on the caller's shard via the
+    // existing /files multipart path. See doc 23.
+    if state.config.marketplace.is_some() {
+        r = r.route("/marketplace/install/:id", post(install_from_marketplace));
     }
 
     // Mount the embedded SvelteKit UI at `/`, `/ui`, and `/ui/*`. These
@@ -228,8 +267,8 @@ async fn healthz() -> Response {
 
 async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Response {
     // 1. Auth.
-    let tenant = match state.resolve_tenant(req.headers()) {
-        Some(t) => t,
+    let principal = match state.resolve_principal(req.headers()) {
+        Some(p) => p,
         None => {
             return error_response(
                 StatusCode::UNAUTHORIZED,
@@ -238,9 +277,11 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
             );
         }
     };
+    let tenant = principal.tenant.clone();
 
     // 2. Pick the upstream by path prefix. `/probes/build*` lands on the
-    //    `omp-builder` service (per doc 20); everything else flows to the
+    //    `omp-builder` service (per doc 20); `/marketplace/probes*` lands on
+    //    `omp-marketplace` (per doc 23); everything else flows to the
     //    tenant's shard exactly as before.
     let path_for_routing = req.uri().path();
     let upstream_base = if path_for_routing.starts_with("/probes/build") {
@@ -251,6 +292,17 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
                     StatusCode::SERVICE_UNAVAILABLE,
                     "builder_unavailable",
                     "no omp-builder configured for this gateway",
+                );
+            }
+        }
+    } else if path_for_routing.starts_with("/marketplace/probes") {
+        match state.config.marketplace.as_deref() {
+            Some(url) => url.to_string(),
+            None => {
+                return error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "marketplace_unavailable",
+                    "no omp-marketplace configured for this gateway",
                 );
             }
         }
@@ -267,8 +319,13 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
         }
     };
 
-    // 3. Issue a signed tenant context.
-    let ctx = match state.signer.issue_default(&tenant, Vec::new()) {
+    // 3. Issue a signed tenant context. Carry `sub` so `omp-marketplace`
+    //    (and any other downstream that records actor identity) can record
+    //    the authenticated WorkOS user without trusting client-side data.
+    let ctx = match state
+        .signer
+        .issue_default_with_sub(&tenant, Vec::new(), principal.sub.clone())
+    {
         Ok(c) => c,
         Err(e) => {
             return error_response(
@@ -403,6 +460,224 @@ fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
                 "code": code,
                 "message": message,
             }
+        })),
+    )
+        .into_response()
+}
+
+/// `POST /marketplace/install/:id` — gateway-owned per
+/// `docs/design/23-probe-marketplace.md`. Resolves the caller's tenant,
+/// fetches the catalog entry from the marketplace, downloads each blob,
+/// and stages them under `probes/<ns>/<name>/{probe.wasm,probe.toml,README.md}`
+/// on the caller's shard via a multipart POST to `/files`. Returns the
+/// staged manifest hashes; the user clicks Commit on the existing Commit
+/// page to make it durable.
+async fn install_from_marketplace(
+    State(state): State<GatewayState>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let principal = match state.resolve_principal(&headers) {
+        Some(p) => p,
+        None => {
+            return error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "missing or unknown bearer token",
+            );
+        }
+    };
+    let tenant = principal.tenant.clone();
+    let marketplace = match state.config.marketplace.as_deref() {
+        Some(u) => u.trim_end_matches('/').to_string(),
+        None => {
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "marketplace_unavailable",
+                "no omp-marketplace configured for this gateway",
+            );
+        }
+    };
+    let shard = match state.shard_for(&tenant) {
+        Some(s) => s.trim_end_matches('/').to_string(),
+        None => {
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no_shards",
+                "no backend shards configured",
+            );
+        }
+    };
+
+    // 1. Fetch catalog entry.
+    let probe: serde_json::Value = match state
+        .client
+        .get(format!("{marketplace}/marketplace/probes/{id}"))
+        .send()
+        .await
+    {
+        Ok(resp) => match resp.error_for_status() {
+            Ok(r) => match r.json().await {
+                Ok(v) => v,
+                Err(e) => {
+                    return error_response(
+                        StatusCode::BAD_GATEWAY,
+                        "marketplace_decode",
+                        &e.to_string(),
+                    );
+                }
+            },
+            Err(e) => {
+                let code = if e.status().map(|s| s.as_u16()) == Some(404) {
+                    "not_found"
+                } else {
+                    "marketplace_status"
+                };
+                return error_response(StatusCode::BAD_GATEWAY, code, &e.to_string());
+            }
+        },
+        Err(e) => {
+            return error_response(
+                StatusCode::BAD_GATEWAY,
+                "marketplace_unreachable",
+                &e.to_string(),
+            );
+        }
+    };
+
+    let entry = match probe.get("probe") {
+        Some(v) => v,
+        None => {
+            return error_response(
+                StatusCode::BAD_GATEWAY,
+                "marketplace_shape",
+                "marketplace did not return {probe: ...}",
+            );
+        }
+    };
+    let namespace = entry
+        .get("namespace")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let wasm_hash = entry.get("wasm_hash").and_then(|v| v.as_str()).unwrap_or("");
+    let manifest_hash = entry
+        .get("manifest_hash")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let readme_hash = entry
+        .get("readme_hash")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+
+    if namespace.is_empty() || name.is_empty() || wasm_hash.is_empty() || manifest_hash.is_empty() {
+        return error_response(
+            StatusCode::BAD_GATEWAY,
+            "marketplace_shape",
+            "incomplete catalog entry",
+        );
+    }
+
+    // Build a TenantContext for shard ingest.
+    let ctx = match state
+        .signer
+        .issue_default_with_sub(&tenant, Vec::new(), principal.sub.clone())
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "ctx_sign", &e.to_string());
+        }
+    };
+    let ctx_b64 = match ctx.encode() {
+        Ok(s) => s,
+        Err(e) => {
+            return error_response(StatusCode::INTERNAL_SERVER_ERROR, "ctx_encode", &e.to_string());
+        }
+    };
+
+    // 2. For each blob, fetch from marketplace and stage on shard.
+    let mut staged: Vec<serde_json::Value> = Vec::new();
+    let mut blobs: Vec<(&str, &str)> = vec![("probe.wasm", wasm_hash), ("probe.toml", manifest_hash)];
+    if let Some(h) = readme_hash {
+        blobs.push(("README.md", h));
+    }
+
+    for (filename, hash) in blobs {
+        let blob_url = format!("{marketplace}/marketplace/probes/{id}/blobs/{hash}");
+        let bytes = match state.client.get(&blob_url).send().await {
+            Ok(resp) => match resp.error_for_status() {
+                Ok(r) => match r.bytes().await {
+                    Ok(b) => b,
+                    Err(e) => {
+                        return error_response(
+                            StatusCode::BAD_GATEWAY,
+                            "blob_read",
+                            &e.to_string(),
+                        );
+                    }
+                },
+                Err(e) => {
+                    return error_response(
+                        StatusCode::BAD_GATEWAY,
+                        "blob_status",
+                        &e.to_string(),
+                    );
+                }
+            },
+            Err(e) => {
+                return error_response(
+                    StatusCode::BAD_GATEWAY,
+                    "blob_unreachable",
+                    &e.to_string(),
+                );
+            }
+        };
+        let staged_path = format!("probes/{namespace}/{name}/{filename}");
+        let form = reqwest::multipart::Form::new()
+            .text("path", staged_path.clone())
+            .part(
+                "file",
+                reqwest::multipart::Part::bytes(bytes.to_vec()).file_name(filename.to_string()),
+            );
+        let resp = state
+            .client
+            .post(format!("{shard}/files"))
+            .header(TENANT_CTX_HEADER_NAME.as_str(), ctx_b64.clone())
+            .multipart(form)
+            .send()
+            .await;
+        match resp {
+            Ok(r) => {
+                let status = r.status();
+                if !status.is_success() {
+                    let body = r.text().await.unwrap_or_default();
+                    return error_response(
+                        StatusCode::BAD_GATEWAY,
+                        "shard_stage",
+                        &format!("staging {staged_path} got {status}: {body}"),
+                    );
+                }
+                if let Ok(json) = r.json::<serde_json::Value>().await {
+                    staged.push(json);
+                }
+            }
+            Err(e) => {
+                return error_response(
+                    StatusCode::BAD_GATEWAY,
+                    "shard_unreachable",
+                    &e.to_string(),
+                );
+            }
+        }
+    }
+
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "ok": true,
+            "namespace": namespace,
+            "name": name,
+            "staged": staged,
         })),
     )
         .into_response()

@@ -58,7 +58,11 @@
       // empty case (the table already renders an "empty" row).
       const isNoCommits =
         e instanceof ApiError && e.code === 'not_found' && /no commits/i.test(e.message);
-      if (isNoCommits) {
+      // 401s mean the auth gate (WorkOS gate or "browser sign-in not
+      // configured") is up; the layout overlays a message already, so
+      // don't double up with a red banner behind it.
+      const isUnauthed = e instanceof ApiError && e.status === 401;
+      if (isNoCommits || isUnauthed) {
         entries = [];
         repoStatus = null;
         latestCommit = null;

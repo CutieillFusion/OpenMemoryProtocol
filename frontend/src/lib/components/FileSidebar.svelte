@@ -34,6 +34,11 @@
   // Re-open ancestors of the current file whenever the route changes.
   $: openAncestorsOf(currentPath);
 
+  /** True after a successful load that came from the staging index, not
+   * from HEAD. Surfaces a "showing staged" hint at the sidebar header so
+   * the user knows the listing isn't durable yet. */
+  let showingStaged = false;
+
   async function load(_at: string) {
     loading = true;
     error = null;
@@ -44,9 +49,31 @@
         verbose: true
       });
       entries = tree.filter((e) => e.mode === 'manifest' || e.mode === 'blob');
+      showingStaged = false;
     } catch (e) {
-      error = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
-      entries = [];
+      // No commits yet → fall back to listing the staging index, so the
+      // sidebar still shows files the user has uploaded or installed but
+      // not committed. Same fallback for `not_found`/`no commits` shapes.
+      const isNoCommits =
+        e instanceof ApiError &&
+        ((e.status === 404 && /no commits/i.test(e.message)) ||
+          e.code === 'not_found');
+      if (isNoCommits && !_at) {
+        try {
+          const tree = await getTree('', { staged: true, verbose: true });
+          entries = tree.filter((e) => e.mode === 'manifest' || e.mode === 'blob');
+          showingStaged = true;
+          error = null;
+        } catch (e2) {
+          error = e2 instanceof ApiError ? `${e2.code}: ${e2.message}` : String(e2);
+          entries = [];
+          showingStaged = false;
+        }
+      } else {
+        error = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
+        entries = [];
+        showingStaged = false;
+      }
     } finally {
       loading = false;
     }
@@ -160,6 +187,9 @@
 <aside class="file-sidebar">
   <div class="sidebar-header">
     <div class="sidebar-title">Files</div>
+    {#if showingStaged}
+      <span class="tag tag--accent" title="Listing the staging index — these paths are uploaded/installed but not committed yet.">staged</span>
+    {/if}
   </div>
   <div class="sidebar-search">
     <input
@@ -284,6 +314,9 @@
   .sidebar-header {
     padding: 12px 14px 8px;
     border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .sidebar-title {
     font-weight: 600;

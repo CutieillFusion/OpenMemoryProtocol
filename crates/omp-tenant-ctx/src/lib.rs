@@ -34,8 +34,15 @@ pub struct TenantContext {
     pub quotas_ref: Vec<u8>,
     /// Unix epoch seconds at which this context expires.
     pub exp_unix: i64,
+    /// Optional WorkOS user id (the `sub` from the session cookie). Populated
+    /// when the request was authenticated via WorkOS; absent for Bearer
+    /// machine clients. Downstream services that record publisher/actor
+    /// identity (e.g., `omp-marketplace`) read this. Added in
+    /// `docs/design/23-probe-marketplace.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub: Option<String>,
     /// Ed25519 signature over canonical CBOR of `{tenant_id, quotas_ref,
-    /// exp_unix}` (i.e. the same struct without the `signature` field).
+    /// exp_unix, sub}` (i.e. the same struct without the `signature` field).
     /// Empty during construction; populated by `sign`.
     #[serde(default, with = "serde_bytes")]
     pub signature: Vec<u8>,
@@ -134,6 +141,19 @@ impl GatewaySigner {
         quotas_ref: Vec<u8>,
         exp_unix: i64,
     ) -> Result<TenantContext, CtxError> {
+        self.issue_with_sub(tenant_id, quotas_ref, exp_unix, None)
+    }
+
+    /// Like `issue`, with an optional WorkOS user id baked into the signed
+    /// envelope. See `docs/design/23-probe-marketplace.md` for why
+    /// downstream services need this.
+    pub fn issue_with_sub(
+        &self,
+        tenant_id: &str,
+        quotas_ref: Vec<u8>,
+        exp_unix: i64,
+        sub: Option<String>,
+    ) -> Result<TenantContext, CtxError> {
         if tenant_id.is_empty() {
             return Err(CtxError::EmptyTenant);
         }
@@ -141,6 +161,7 @@ impl GatewaySigner {
             tenant_id: tenant_id.to_string(),
             quotas_ref,
             exp_unix,
+            sub,
             signature: Vec::new(),
         };
         let canonical = canonical_signed_bytes(&ctx)?;
@@ -158,6 +179,16 @@ impl GatewaySigner {
     ) -> Result<TenantContext, CtxError> {
         let now = current_unix();
         self.issue(tenant_id, quotas_ref, now + DEFAULT_EXTRA_LIFETIME_SECS)
+    }
+
+    pub fn issue_default_with_sub(
+        &self,
+        tenant_id: &str,
+        quotas_ref: Vec<u8>,
+        sub: Option<String>,
+    ) -> Result<TenantContext, CtxError> {
+        let now = current_unix();
+        self.issue_with_sub(tenant_id, quotas_ref, now + DEFAULT_EXTRA_LIFETIME_SECS, sub)
     }
 }
 
@@ -207,17 +238,25 @@ impl TenantContext {
 fn canonical_signed_bytes(ctx: &TenantContext) -> Result<Vec<u8>, CtxError> {
     // The signed body is the same struct minus the signature. Serializing a
     // companion `SignedBody` keeps the wire shape stable across CBOR libraries.
+    //
+    // `sub` is `skip_serializing_if = "Option::is_none"` so existing
+    // contexts (issued before doc 23) hash identically — the new field is
+    // additive and back-compatible. Downstream verifiers need to be on the
+    // same crate version, but old contexts on the wire still verify.
     #[derive(Serialize)]
     struct SignedBody<'a> {
         tenant_id: &'a str,
         #[serde(with = "super_serde_bytes")]
         quotas_ref: &'a [u8],
         exp_unix: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sub: Option<&'a str>,
     }
     let body = SignedBody {
         tenant_id: &ctx.tenant_id,
         quotas_ref: &ctx.quotas_ref,
         exp_unix: ctx.exp_unix,
+        sub: ctx.sub.as_deref(),
     };
     let mut out = Vec::new();
     ciborium::ser::into_writer(&body, &mut out).map_err(|e| CtxError::CborEncode(e.to_string()))?;
@@ -291,11 +330,45 @@ mod tests {
     }
 
     #[test]
+    fn sub_field_round_trips_in_signed_envelope() {
+        let signer = GatewaySigner::generate();
+        let vk = signer.verifying_key();
+        let ctx = signer
+            .issue_with_sub(
+                "acme",
+                vec![],
+                current_unix() + 60,
+                Some("user_01ABC".into()),
+            )
+            .expect("issue");
+        let wire = ctx.encode().expect("encode");
+        let verified = TenantContext::verify(&wire, &vk).expect("verify");
+        assert_eq!(verified.sub.as_deref(), Some("user_01ABC"));
+    }
+
+    #[test]
+    fn sub_absence_is_signed_distinctly_from_empty_string() {
+        // A context issued with sub=None must not verify if someone
+        // tampers it to sub=Some(""). This guards against the
+        // skip_serializing_if optimization being a soundness bug.
+        let signer = GatewaySigner::generate();
+        let vk = signer.verifying_key();
+        let mut ctx = signer
+            .issue("alice", vec![], current_unix() + 60)
+            .expect("issue");
+        ctx.sub = Some(String::new());
+        let wire = ctx.encode().expect("encode");
+        let err = TenantContext::verify(&wire, &vk).unwrap_err();
+        assert!(matches!(err, CtxError::BadSignature), "got {err:?}");
+    }
+
+    #[test]
     fn rejects_missing_signature() {
         let mut ctx = TenantContext {
             tenant_id: "alice".into(),
             quotas_ref: vec![],
             exp_unix: current_unix() + 60,
+            sub: None,
             signature: vec![],
         };
         ctx.signature.clear();

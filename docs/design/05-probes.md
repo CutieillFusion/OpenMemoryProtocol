@@ -27,11 +27,11 @@ probes/
     sha256.probe.toml
 ```
 
-A schema reference `probe = "pdf.page_count"` resolves to `probes/pdf/page_count.wasm` + `probes/pdf/page_count.probe.toml` in the current tree. Both files are stored as `blob` entries — the same rule as `schemas/*.schema` and `omp.toml`.
+A schema reference `probe = "pdf.page_count"` resolves to `probes/pdf/page_count/probe.wasm` + `probes/pdf/page_count/probe.toml` in the current tree (per [`23-probe-marketplace.md`](./23-probe-marketplace.md), every probe lives in its own directory and may also carry `README.md` and a `source/` companion). Both required files are stored as `blob` entries — the same rule as `schemas/*.schema` and `omp.toml`.
 
 Probes time-travel with the rest of the repo: at `--at <commit>`, the probes in effect are whatever was in `probes/` at that commit.
 
-## The probe manifest — `<name>.probe.toml`
+## The probe manifest — `probe.toml`
 
 ```toml
 name = "pdf.page_count"       # must match <namespace>/<name> file path
@@ -135,13 +135,14 @@ pub unsafe extern "C" fn probe_run(in_ptr: *const u8, in_len: usize) -> u64 {
 
 **2. Compile**: `cargo build --release --target wasm32-unknown-unknown`.
 
-**3. Write the sibling manifest** at `probes/<namespace>/<name>.probe.toml` declaring `name`, `returns`, kwargs.
+**3. Write the sibling manifest** at `probes/<namespace>/<name>/probe.toml` declaring `name`, `returns`, kwargs.
 
-**4. Stage**:
+**4. Stage** (per-probe folder layout from [`23-probe-marketplace.md`](./23-probe-marketplace.md)):
 
 ```
-POST /files path=probes/<namespace>/<name>.wasm        file=@target/.../module.wasm
-POST /files path=probes/<namespace>/<name>.probe.toml  file=@probe.toml
+POST /files path=probes/<namespace>/<name>/probe.wasm  file=@target/.../module.wasm
+POST /files path=probes/<namespace>/<name>/probe.toml  file=@probe.toml
+POST /files path=probes/<namespace>/<name>/README.md   file=@README.md   # optional
 ```
 
 **5. Dry-run** via `POST /test/ingest` with a sample file and a schema that references the new probe. OMP validates the probe loads, runs it, and returns the would-be manifest without staging.

@@ -18,6 +18,21 @@ SHARD_A_PORT=${SHARD_A_PORT:-8001}
 SHARD_B_PORT=${SHARD_B_PORT:-8002}
 BUILDER_PORT=${BUILDER_PORT:-9100}
 
+# Source .env at the repo root if it exists. Lets the operator put
+# WORKOS_CLIENT_ID / WORKOS_CLIENT_SECRET (and optionally
+# WORKOS_ISSUER_URL / WORKOS_REDIRECT_URI) there once and have the demo
+# pick them up automatically. Without these, the gateway runs in token
+# mode and the web UI shows "Browser sign-in not configured".
+ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/.env"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+WORKOS_ISSUER_URL=${WORKOS_ISSUER_URL:-https://api.workos.com}
+WORKOS_REDIRECT_URI=${WORKOS_REDIRECT_URI:-http://localhost:$GATEWAY_PORT/auth/callback}
+
 log() { printf '[demo] %s\n' "$*"; }
 
 cleanup() {
@@ -76,10 +91,33 @@ allow_dev_tokens = true
 builder = "http://127.0.0.1:$BUILDER_PORT"
 EOF
 
+# When WORKOS_CLIENT_ID is set (e.g., via .env), enable browser sign-in.
+# Without it the gateway runs in pure token mode and the web UI surfaces
+# the "Browser sign-in not configured" page (which is the right behavior;
+# the CLI keeps using `Authorization: Bearer dev-*`).
+if [ -n "${WORKOS_CLIENT_ID:-}" ]; then
+  log "WorkOS configured — enabling browser sign-in for the web UI"
+  cat >>"$DEMO_ROOT/gateway.toml" <<EOF
+
+[workos]
+client_id = "$WORKOS_CLIENT_ID"
+issuer_url = "$WORKOS_ISSUER_URL"
+redirect_uri = "$WORKOS_REDIRECT_URI"
+EOF
+fi
+
 log "starting gateway on :$GATEWAY_PORT"
+# Persist the signing key across restarts so a developer doesn't get
+# logged out every time they `Ctrl-C` the demo and start it again.
+SIGNING_KEY="$DEMO_ROOT/gateway-signing.key"
+if [ ! -f "$SIGNING_KEY" ]; then
+  python3 -c "import secrets,sys; sys.stdout.buffer.write(secrets.token_bytes(32))" >"$SIGNING_KEY"
+fi
+WORKOS_CLIENT_SECRET="${WORKOS_CLIENT_SECRET:-}" \
 "$GATEWAY_BIN" \
   --bind "127.0.0.1:$GATEWAY_PORT" \
   --config "$DEMO_ROOT/gateway.toml" \
+  --signing-key "$SIGNING_KEY" \
   >"$DEMO_ROOT/gateway.log" 2>&1 &
 
 # Give services a moment to start.
@@ -129,7 +167,10 @@ curl -fsS "http://127.0.0.1:$SHARD_B_PORT/files" | head -c 400
 echo
 
 log "[demo] unauthorized request rejected at gateway:"
-curl -fs -o /dev/null -w "status=%{http_code}\n" "$GATE/status" \
+# /status is intentionally unauth-readable in WorkOS mode (per doc 22 the
+# frontend probes it to learn `auth_mode`). Hit /files instead — that
+# always requires a resolved tenant.
+curl -fs -o /dev/null -w "status=%{http_code}\n" "$GATE/files" \
   -H "Authorization: Bearer wrong-token" || true
 
 log "[demo] embedded UI smoke check:"

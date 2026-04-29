@@ -4,7 +4,7 @@
   import { base } from '$app/paths';
   import { getFile, patchFields, deleteFile, log } from '$lib/api';
   import { ApiError } from '$lib/api';
-  import type { Manifest, FieldValue, CommitView, RenderHint } from '$lib/types';
+  import type { Manifest, FieldValue, CommitView, RenderHint, TreeEntry, BlobInfo } from '$lib/types';
   import {
     fieldKind,
     formatTimestamp,
@@ -24,6 +24,10 @@
   let loading = false;
   let error: string | null = null;
   let history: CommitView[] = [];
+  /// True when the rendered content came from the staging index, not from
+  /// HEAD. Surfaces a "staged" tag in the UI so the user knows the file
+  /// hasn't been committed yet.
+  let isStaged = false;
 
   // Field editor state.
   let editing: string | null = null;
@@ -36,8 +40,23 @@
     resp = null;
     blobInfo = null;
     history = [];
+    isStaged = false;
     try {
-      const r = await getFile(filePath, { at: at || undefined, verbose: true });
+      let r: Manifest | TreeEntry[] | BlobInfo;
+      try {
+        r = await getFile(filePath, { at: at || undefined, verbose: true });
+      } catch (e) {
+        // If the file isn't committed yet but is sitting in the index
+        // (e.g., just-uploaded or just-installed-from-marketplace), retry
+        // against the staging index. `at` is meaningless when reading
+        // staged, so drop it.
+        if (e instanceof ApiError && e.status === 404 && !at) {
+          r = await getFile(filePath, { verbose: true, staged: true });
+          isStaged = true;
+        } else {
+          throw e;
+        }
+      }
       if (Array.isArray(r)) {
         // Path resolved to a tree — bounce the user back.
         resp = null;
@@ -182,6 +201,10 @@
 
   {#if resp || blobInfo}
     <div class="meta-bar mono">
+      {#if isStaged}
+        <span class="tag tag--accent" title="This file is in the staging index but has not been committed yet. Visit /commit to make it durable.">staged</span>
+        <span class="meta-dot">·</span>
+      {/if}
       {#if resp}
         <span class="tag tag--accent">{resp.file_type}</span>
         <span class="meta-dot">·</span>
@@ -241,7 +264,7 @@
   {/if}
 
   {#if (resp || blobInfo) && filePath}
-    <FileRenderer path={filePath} {at} render={renderHint} />
+    <FileRenderer path={filePath} {at} render={renderHint} staged={isStaged} />
   {/if}
 
   </main>

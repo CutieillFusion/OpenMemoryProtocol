@@ -5,3 +5,5 @@ probes-src/target/
 .claude/
 *.png
 .playwright-mcp/
+.env
+.env.local

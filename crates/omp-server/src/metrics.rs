@@ -26,6 +26,15 @@ const UNKNOWN_TENANT: &str = "_unknown";
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
 /// Initialize the Prometheus recorder and register a handle. Idempotent.
+///
+/// Uses `build_recorder()` rather than `build()` so we DON'T spin up an
+/// HTTP listener on the default 0.0.0.0:9000 port. Two shards running on
+/// the same host would otherwise race on that port at startup (the
+/// previous code dropped the exporter future immediately, but the listener
+/// teardown isn't synchronous, so a second shard launching milliseconds
+/// later would hit "Address already in use" and panic). The
+/// `/metrics` HTTP route on the gateway-fronted shard already serves the
+/// snapshot via `render()`, so the standalone listener was dead weight.
 pub fn init() {
     HANDLE.get_or_init(|| {
         // Same buckets as in doc 18: 5ms .. 60s, 7 entries.
@@ -36,7 +45,7 @@ pub fn init() {
                 &buckets,
             )
             .expect("set buckets");
-        let (recorder, _exporter) = builder.build().expect("build prometheus recorder");
+        let recorder = builder.build_recorder();
         let handle = recorder.handle();
         metrics::set_global_recorder(recorder).ok();
         handle

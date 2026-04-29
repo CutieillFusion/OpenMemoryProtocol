@@ -17,11 +17,19 @@ pub struct StarterProbe {
 }
 
 impl StarterProbe {
+    /// As of `docs/design/23-probe-marketplace.md`, each probe lives in its
+    /// own directory `probes/<namespace>/<basename>/` containing
+    /// `probe.wasm`, `probe.toml`, and optional companions (`README.md`,
+    /// `source/`, examples). The per-folder identity is what the
+    /// marketplace publishes and installs.
+    pub fn tree_path_dir(&self) -> String {
+        format!("probes/{}/{}", self.namespace, self.basename)
+    }
     pub fn tree_path_wasm(&self) -> String {
-        format!("probes/{}/{}.wasm", self.namespace, self.basename)
+        format!("{}/probe.wasm", self.tree_path_dir())
     }
     pub fn tree_path_manifest(&self) -> String {
-        format!("probes/{}/{}.probe.toml", self.namespace, self.basename)
+        format!("{}/probe.toml", self.tree_path_dir())
     }
 }
 

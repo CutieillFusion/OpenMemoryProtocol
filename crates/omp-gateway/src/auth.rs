@@ -39,7 +39,7 @@ pub const SESSION_COOKIE_NAME: &str = "omp_session";
 pub const SESSION_PRESENCE_COOKIE: &str = "omp_signed_in";
 pub const STATE_COOKIE_PREFIX: &str = "omp_oidc_state_";
 
-const STATE_COOKIE_TTL_SECS: u64 = 5 * 60;
+const STATE_COOKIE_TTL_SECS: u64 = 15 * 60;
 const DEFAULT_REFRESH_GRACE_SECS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -554,22 +554,28 @@ pub async fn callback(
         None => return error_resp(StatusCode::BAD_REQUEST, "missing_state"),
     };
 
-    // Look up the matching state cookie.
+    // Look up the matching state cookie. If it's missing/expired/tampered,
+    // the safest user-facing recovery is to start a fresh login flow rather
+    // than dead-end on a JSON error. Common causes: cookie TTL elapsed
+    // before the user finished the WorkOS form, gateway signing key
+    // rotated mid-flow (ephemeral key + restart), or the user opened the
+    // callback URL in a different browser session.
     let cookie_name = format!("{}{}", STATE_COOKIE_PREFIX, state_id);
+    let restart_login = || Redirect::to("/auth/login?return_to=%2Fui%2F").into_response();
     let cookie_value = match parse_cookie(&headers, &cookie_name) {
         Some(v) => v,
-        None => return error_resp(StatusCode::BAD_REQUEST, "state_cookie_missing"),
+        None => return restart_login(),
     };
     let verifier_key = state.signer.verifying_key();
     let state_claims = match decode_state(cookie_value, &verifier_key) {
         Ok(c) => c,
-        Err(_) => return error_resp(StatusCode::BAD_REQUEST, "state_cookie_invalid"),
+        Err(_) => return restart_login(),
     };
     if state_claims.id != state_id {
-        return error_resp(StatusCode::BAD_REQUEST, "state_mismatch");
+        return restart_login();
     }
     if state_claims.expires_at < now_unix() {
-        return error_resp(StatusCode::BAD_REQUEST, "state_expired");
+        return restart_login();
     }
 
     // Exchange the code. The two providers expect different request shapes
@@ -795,6 +801,100 @@ pub async fn refresh(
         }
     }
     resp
+}
+
+/// `GET /auth/me` — returns the WorkOS user record for the current
+/// session cookie. The session cookie deliberately doesn't carry email
+/// (per `docs/design/22-workos-auth.md` §Sessions: PII discipline), so we
+/// look the user up via the WorkOS Management API on demand. Per-request
+/// fetch is fine for the UI's profile menu — it's at most one call per
+/// page load.
+pub async fn me(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
+    let oidc = match state.oidc.as_ref() {
+        Some(o) => o.clone(),
+        None => return error_resp(StatusCode::NOT_FOUND, "workos_disabled"),
+    };
+    let session = match resolve_session_cookie(&headers, &state.signer.verifying_key()) {
+        Some(s) => s,
+        None => return error_resp(StatusCode::UNAUTHORIZED, "no_session"),
+    };
+
+    // For the WorkOS provider we use Management API; for generic OIDC we
+    // hit the discovered userinfo_endpoint with a fresh access token —
+    // but generic OIDC needs a stored access_token, which the cookie
+    // doesn't carry. v1 supports profile-lookup only for WorkOS.
+    if !matches!(oidc.provider, AuthProvider::Workos) {
+        return (
+            StatusCode::OK,
+            axum::Json(serde_json::json!({
+                "tenant": session.tenant,
+                "sub": session.sub,
+                "email": serde_json::Value::Null,
+                "first_name": serde_json::Value::Null,
+                "last_name": serde_json::Value::Null,
+                "profile_picture_url": serde_json::Value::Null,
+            })),
+        )
+            .into_response();
+    }
+
+    let url = format!(
+        "{}/user_management/users/{}",
+        oidc.config.issuer_url.trim_end_matches('/'),
+        session.sub
+    );
+    let resp = match oidc
+        .http
+        .get(&url)
+        .bearer_auth(&oidc.config.client_secret)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return error_resp(StatusCode::BAD_GATEWAY, &format!("workos_send: {e}")),
+    };
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return error_resp(
+            StatusCode::BAD_GATEWAY,
+            &format!("workos_status {status}: {text}"),
+        );
+    }
+    // Forward only the safe fields. Don't leak the raw WorkOS response in
+    // case it grows new properties we haven't audited.
+    #[derive(serde::Deserialize)]
+    struct WorkosUserDetail {
+        #[allow(dead_code)]
+        id: String,
+        #[serde(default)]
+        email: Option<String>,
+        #[serde(default)]
+        first_name: Option<String>,
+        #[serde(default)]
+        last_name: Option<String>,
+        #[serde(default)]
+        profile_picture_url: Option<String>,
+        #[serde(default)]
+        email_verified: Option<bool>,
+    }
+    let detail: WorkosUserDetail = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => return error_resp(StatusCode::BAD_GATEWAY, &format!("workos_json: {e}")),
+    };
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "tenant": session.tenant,
+            "sub": session.sub,
+            "email": detail.email,
+            "email_verified": detail.email_verified,
+            "first_name": detail.first_name,
+            "last_name": detail.last_name,
+            "profile_picture_url": detail.profile_picture_url,
+        })),
+    )
+        .into_response()
 }
 
 pub async fn logout(State(state): State<GatewayState>, headers: HeaderMap) -> Response {

@@ -239,9 +239,13 @@ where
 async fn build_artifacts(wasm_path: &Path, req: &BuildRequest) -> std::io::Result<Vec<Artifact>> {
     let wasm_bytes = tokio::fs::read(wasm_path).await?;
     let base64 = base64::engine::general_purpose::STANDARD;
-    let wasm_tree_path = format!("probes/{}/{}.wasm", req.namespace, req.name);
-    let toml_tree_path = format!("probes/{}/{}.probe.toml", req.namespace, req.name);
-    let src_tree_path = format!("probes/{}/{}.rs", req.namespace, req.name);
+    // Per-probe folder layout (doc 23). Each probe is its own directory
+    // under `probes/<ns>/<name>/`, with `probe.wasm`, `probe.toml`, and
+    // optional companions (source, README) as siblings inside.
+    let probe_dir = format!("probes/{}/{}", req.namespace, req.name);
+    let wasm_tree_path = format!("{probe_dir}/probe.wasm");
+    let toml_tree_path = format!("{probe_dir}/probe.toml");
+    let src_tree_path = format!("{probe_dir}/source/lib.rs");
     Ok(vec![
         Artifact {
             path: wasm_tree_path,
@@ -304,9 +308,9 @@ mod tests {
         };
         let arts = build_artifacts(&wasm, &req).await.unwrap();
         let paths: Vec<&str> = arts.iter().map(|a| a.path.as_str()).collect();
-        assert!(paths.contains(&"probes/test/demo.wasm"));
-        assert!(paths.contains(&"probes/test/demo.probe.toml"));
-        assert!(paths.contains(&"probes/test/demo.rs"));
+        assert!(paths.contains(&"probes/test/demo/probe.wasm"));
+        assert!(paths.contains(&"probes/test/demo/probe.toml"));
+        assert!(paths.contains(&"probes/test/demo/source/lib.rs"));
     }
 
     /// Sanity check: with a 1ms timeout, run_cargo should report timeout

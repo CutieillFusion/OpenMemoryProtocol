@@ -2,26 +2,38 @@
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { base } from '$app/paths';
-  import { auth, probeAuth, setToken, clearToken, startWorkosLogin } from '$lib/auth';
+  import { auth, probeAuth, startWorkosLogin } from '$lib/auth';
   import { watch, type WatchHandle } from '$lib/sse';
   import type { WatchEvent } from '$lib/types';
   import { relativeTime } from '$lib/format';
+  import ProfileMenu from '$lib/components/ProfileMenu.svelte';
   import '../app.css';
 
-  let tokenInput = '';
   let watchHandle: WatchHandle | null = null;
   let events: WatchEvent[] = [];
   let panelOpen = true;
   let healthOk = true;
 
-  $: showTokenModal = $auth.mode === 'token-required' && !$auth.token;
+  // Web UI is WorkOS-only. The bearer-token "paste a token" modal was a
+  // pre-doc-22 fallback for self-hosted single-tenant installs; it has
+  // been removed because (a) it's a phishing-shaped UX, and (b) doc 22
+  // committed the browser surface to WorkOS exclusively. The CLI and any
+  // machine client still use `Authorization: Bearer <token>` against the
+  // gateway — that path is server-side and untouched by these changes.
   $: showWorkosGate = $auth.mode === 'workos';
-  $: showLoginGate = showTokenModal || showWorkosGate;
+  // A deployment in token-mode (`auth_mode: "token"` from /status) means
+  // the operator hasn't configured WorkOS for browser users. Render an
+  // explanatory page rather than the bearer-paste modal — the browser
+  // user has no way to authenticate here, and pretending otherwise was
+  // the bug behind "missing or unknown bearer token".
+  $: showWorkosUnconfigured = $auth.mode === 'token-required';
+  $: showLoginGate = showWorkosGate || showWorkosUnconfigured;
 
   const navLinks = [
     { href: '/', label: 'Tree' },
     { href: '/upload', label: 'Upload' },
     { href: '/probes/build', label: 'Build probe' },
+    { href: '/marketplace', label: 'Marketplace' },
     { href: '/commit', label: 'Commit' },
     { href: '/branches', label: 'Branches' },
     { href: '/query', label: 'Query' },
@@ -60,26 +72,8 @@
     watchHandle?.close();
   });
 
-  function submitToken() {
-    if (!tokenInput.trim()) return;
-    setToken(tokenInput.trim());
-    tokenInput = '';
-    // Hard reload so any page that already 401'd before the token was set
-    // re-fetches with auth attached. Cheaper than wiring auth-store
-    // subscriptions into every route.
-    if (typeof location !== 'undefined') {
-      location.reload();
-    } else {
-      startWatch();
-    }
-  }
-
-  function logoutClick() {
-    clearToken();
-    events = [];
-    auth.update((s) => ({ ...s, mode: 'token-required' }));
-    watchHandle?.close();
-  }
+  // Logout is exclusively WorkOS now (the form below POSTs to /auth/logout).
+  // The pre-doc-22 `clearToken` flow used to live here and has been removed.
 </script>
 
 <div class="app">
@@ -104,19 +98,11 @@
         {#if $auth.mode === 'no-auth'}
           <span class="tag">no-auth</span>
         {:else if $auth.mode === 'session'}
-          <form method="POST" action="/auth/logout" style="display: inline">
-            <button class="btn btn--ghost btn--sm" type="submit" title="Sign out of WorkOS">
-              <span class="tag tag--accent">signed in</span>
-            </button>
-          </form>
-        {:else if $auth.token}
-          <button class="btn btn--ghost btn--sm" on:click={logoutClick} title="Clear token">
-            <span class="tag tag--accent">token set</span>
-          </button>
+          <ProfileMenu />
         {:else if $auth.mode === 'workos'}
           <span class="tag tag--danger">signed out</span>
-        {:else}
-          <span class="tag tag--danger">no token</span>
+        {:else if $auth.mode === 'token-required'}
+          <span class="tag tag--danger" title="WorkOS not configured for this deployment">no auth configured</span>
         {/if}
       </span>
     </div>
@@ -176,38 +162,24 @@
     </div>
   {/if}
 
-  {#if showTokenModal}
+  {#if showWorkosUnconfigured}
     <div class="modal-overlay">
-      <form
-        class="modal"
-        on:submit|preventDefault={submitToken}
-      >
-        <h2>Bearer token required</h2>
+      <div class="modal">
+        <h2>Browser sign-in not configured</h2>
         <p class="muted text-sm">
-          The gateway is configured for multi-tenant auth. Paste the API
-          token for your tenant. It will be saved in this browser's
-          <code>localStorage</code> as <code>omp.token</code>.
+          This deployment of OpenMemoryProtocol doesn't have WorkOS auth
+          configured for browser users. The web UI is WorkOS-only — there's
+          no way to sign in here until an operator enables it.
         </p>
-        <div class="field">
-          <label class="label" for="tok">Token</label>
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            id="tok"
-            class="input mono"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="paste token here"
-            bind:value={tokenInput}
-            autofocus
-          />
-        </div>
-        <div class="flex flex--between">
-          <span class="text-xs soft">No login form — paste-only.</span>
-          <button class="btn btn--primary" type="submit" disabled={!tokenInput.trim()}>
-            Authenticate
-          </button>
-        </div>
-      </form>
+        <p class="muted text-sm">
+          If you're an operator: set <code>[workos]</code> in your gateway
+          config (see <code>docs/design/22-workos-auth.md</code>) and
+          restart the gateway. Until then, machine clients (the CLI,
+          CI jobs) can still hit the API directly with
+          <code>Authorization: Bearer &lt;token&gt;</code> against a
+          tenant token registered in <code>tenants.toml</code>.
+        </p>
+      </div>
     </div>
   {/if}
 </div>

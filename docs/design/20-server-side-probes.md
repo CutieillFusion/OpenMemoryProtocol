@@ -117,8 +117,8 @@ This change is independent of the rest of the doc and shippable on its own. It's
 
 `current_probes()` in `crates/omp-core/src/api.rs:650-673` builds the probe registry that the ingest engine consults. Today it returns a HashMap keyed by `<namespace>.<name>` populated entirely from the embedded starter pack. The fix:
 
-1. Walk the current `TreeView` for every blob under `probes/<ns>/<name>.wasm`.
-2. For each one, look for a colocated `probes/<ns>/<name>.probe.toml`. Parse `[limits]` (matching the format already used by the starter pack, so `crates/omp-core/src/probes/starter.rs` exposes a reusable parser).
+1. Walk the current `TreeView` for every blob under `probes/<ns>/<name>/probe.wasm` (per the per-probe folder layout from [`23-probe-marketplace.md`](./23-probe-marketplace.md)).
+2. For each one, look for a colocated `probes/<ns>/<name>/probe.toml`. Parse `[limits]` (matching the format already used by the starter pack, so `crates/omp-core/src/probes/starter.rs` exposes a reusable parser).
 3. Build a `ProbeBlob` (the same struct the starter pack populates) and insert it into the registry under `<ns>.<name>`.
 4. If a starter probe and a tree probe share a name, the tree wins, and a `WARN` is logged. Tenants overriding `file.size` is a power-user move; the policy is "tree is source of truth", consistent with the rest of the design.
 

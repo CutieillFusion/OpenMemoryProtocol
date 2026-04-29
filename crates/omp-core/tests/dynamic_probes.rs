@@ -40,8 +40,8 @@ fn register_user_probe(repo: &Repo, namespace: &str, basename: &str) -> String {
         .find(|p| p.name == "file.size")
         .expect("file.size in starter pack");
 
-    let wasm_path = format!("probes/{namespace}/{basename}.wasm");
-    let toml_path = format!("probes/{namespace}/{basename}.probe.toml");
+    let wasm_path = format!("probes/{namespace}/{basename}/probe.wasm");
+    let toml_path = format!("probes/{namespace}/{basename}/probe.toml");
 
     let manifest_toml = format!(
         r#"name = "{namespace}.{basename}"

@@ -1027,6 +1027,97 @@ impl Repo {
         self.save_index(&idx)
     }
 
+    /// Read a path from the staging index instead of the committed tree.
+    /// Used by the UI's "view staged file" path so a freshly-installed
+    /// marketplace probe (or an in-progress upload) is browsable before
+    /// the user runs `commit`. Returns `NotFound` when nothing is staged
+    /// for that path; the caller should fall back to `show()` for
+    /// committed content. Hits only the local index file + object store
+    /// — no tree walk.
+    pub fn show_staged(&self, path: &str) -> Result<ShowResult> {
+        let idx = self.load_index()?;
+        let entry = idx
+            .entries
+            .get(path)
+            .ok_or_else(|| OmpError::NotFound(format!("path {path:?} not staged")))?;
+        if entry.kind == StagedKind::Delete {
+            return Err(OmpError::NotFound(format!(
+                "path {path:?} is staged for deletion"
+            )));
+        }
+        let hash = entry
+            .hash
+            .clone()
+            .ok_or_else(|| OmpError::NotFound(format!("path {path:?} has no staged hash")))?;
+        let (obj_type, content) = self
+            .store
+            .get(&hash)?
+            .ok_or_else(|| OmpError::Corrupt(format!("staged blob {} missing", hash.hex())))?;
+        match obj_type.as_str() {
+            "manifest" => {
+                let manifest = Manifest::parse(&content)?;
+                let render = self.render_for_file_type(&manifest.file_type, None);
+                Ok(ShowResult::Manifest {
+                    path: path.to_string(),
+                    manifest,
+                    render,
+                })
+            }
+            "blob" => Ok(ShowResult::Blob {
+                path: path.to_string(),
+                blob_hash: hash,
+                size: content.len(),
+                render: RenderHint {
+                    kind: RenderKind::Binary,
+                    max_inline_bytes: None,
+                },
+            }),
+            // The index never contains tree or commit objects; if it
+            // somehow does, refuse rather than guess.
+            other => Err(OmpError::Corrupt(format!(
+                "staged path {path:?} points at a non-blob/manifest ({other})"
+            ))),
+        }
+    }
+
+    /// Like `bytes_of` but reads from the staged index.
+    pub fn bytes_of_staged(&self, path: &str) -> Result<Vec<u8>> {
+        let idx = self.load_index()?;
+        let entry = idx
+            .entries
+            .get(path)
+            .ok_or_else(|| OmpError::NotFound(format!("path {path:?} not staged")))?;
+        if entry.kind == StagedKind::Delete {
+            return Err(OmpError::NotFound(format!(
+                "path {path:?} is staged for deletion"
+            )));
+        }
+        let hash = entry
+            .hash
+            .clone()
+            .ok_or_else(|| OmpError::NotFound(format!("path {path:?} has no staged hash")))?;
+        let (obj_type, content) = self
+            .store
+            .get(&hash)?
+            .ok_or_else(|| OmpError::Corrupt(format!("staged blob {} missing", hash.hex())))?;
+        match obj_type.as_str() {
+            "blob" => Ok(content),
+            "manifest" => {
+                // Bytes-of follows the manifest's source_hash to the raw
+                // blob, mirroring the committed-tree path.
+                let manifest = Manifest::parse(&content)?;
+                let (_, raw) = self
+                    .store
+                    .get(&manifest.source_hash)?
+                    .ok_or_else(|| OmpError::Corrupt("source_hash missing".to_string()))?;
+                Ok(raw)
+            }
+            _ => Err(OmpError::NotFound(format!(
+                "staged path {path:?} is not a file"
+            ))),
+        }
+    }
+
     pub fn show(&self, path: &str, at: Option<&str>) -> Result<ShowResult> {
         let tree_root = self.root_tree(at)?;
         let target: Option<(Mode, Hash)> = if path.is_empty() {
@@ -1135,6 +1226,41 @@ impl Repo {
                 "path {path:?} is a directory"
             ))),
         }
+    }
+
+    /// Flat list of every path currently in the staging index. Used by the
+    /// frontend's file sidebar before the first commit so a freshly-installed
+    /// or uploaded probe is visible without requiring a commit first. Each
+    /// entry's `mode` is resolved by inspecting the object header — it'll
+    /// be `blob` or `manifest` depending on what was staged.
+    pub fn ls_staged(&self) -> Result<Vec<TreeEntryOut>> {
+        let idx = self.load_index()?;
+        let mut out = Vec::with_capacity(idx.entries.len());
+        for (path, change) in idx.entries.iter() {
+            if change.kind == StagedKind::Delete {
+                continue;
+            }
+            let Some(hash) = change.hash.as_ref() else {
+                continue;
+            };
+            let (obj_type, _) = match self.store.get(hash)? {
+                Some(o) => o,
+                None => continue,
+            };
+            let mode = match obj_type.as_str() {
+                "blob" | "manifest" | "tree" => obj_type,
+                _ => "blob".to_string(),
+            };
+            out.push(TreeEntryOut {
+                name: path.clone(),
+                mode,
+                hash: hash.clone(),
+            });
+        }
+        // Lexicographic so the sidebar's grouping logic produces a stable
+        // tree.
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
     }
 
     pub fn ls(&self, path: &str, at: Option<&str>, recursive: bool) -> Result<Vec<TreeEntryOut>> {
@@ -2318,19 +2444,37 @@ impl Repo {
                 let Some(rest) = path.strip_prefix("probes/") else {
                     continue;
                 };
-                let Some(ns_name) = rest.strip_suffix(".wasm") else {
+                // Per `docs/design/23-probe-marketplace.md`, every probe
+                // lives in its own directory: `probes/<ns>/<name>/probe.wasm`
+                // + `probe.toml` + optional README/source. Surface the
+                // pre-doc-23 flat layout (`probes/<ns>/<name>.wasm`) as a
+                // skipped entry with a warning so a half-migrated repo is
+                // visible rather than silently inert.
+                let Some(name_rest) = rest.strip_suffix("/probe.wasm") else {
+                    if rest.ends_with(".wasm") {
+                        tracing::warn!(
+                            path = %path,
+                            "probe is in legacy flat layout; expected `probes/<ns>/<name>/probe.wasm` (see doc 23). skipping."
+                        );
+                    }
                     continue;
                 };
-                // Sibling `.probe.toml` must exist for the probe to be
-                // loadable. A `.wasm` without one is treated as inert.
-                let manifest_path = format!("probes/{ns_name}.probe.toml");
+                // `name_rest` is now `<namespace>/<name>` — exactly two slash
+                // components. Qualified registry key is dotted.
+                if name_rest.matches('/').count() != 1 {
+                    tracing::warn!(
+                        path = %path,
+                        "probe path has unexpected depth; expected `probes/<ns>/<name>/probe.wasm`. skipping."
+                    );
+                    continue;
+                }
+                let manifest_path = format!("probes/{name_rest}/probe.toml");
                 let Some((Mode::Blob, manifest_hash)) =
                     paths::get_at(&self.store, &manifest_path, &tree_root)?
                 else {
                     continue;
                 };
-                // Tree paths use '/'; the qualified name is dotted.
-                let qualified = ns_name.replace('/', ".");
+                let qualified = name_rest.replace('/', ".");
 
                 // If the starter pack already registered this name with the
                 // same bytes (the common case after `omp init` writes the
@@ -2395,15 +2539,18 @@ impl Repo {
                 let Some(rest) = path.strip_prefix("probes/") else {
                     continue;
                 };
-                let Some(ns_name) = rest.strip_suffix(".wasm") else {
+                let Some(name_rest) = rest.strip_suffix("/probe.wasm") else {
                     continue;
                 };
-                let manifest_path = format!("probes/{ns_name}.probe.toml");
+                if name_rest.matches('/').count() != 1 {
+                    continue;
+                }
+                let manifest_path = format!("probes/{name_rest}/probe.toml");
                 if matches!(
                     paths::get_at(&self.store, &manifest_path, &tree_root)?,
                     Some((Mode::Blob, _))
                 ) {
-                    out.insert(ns_name.replace('/', "."));
+                    out.insert(name_rest.replace('/', "."));
                 }
             }
         }

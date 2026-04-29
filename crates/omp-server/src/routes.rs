@@ -269,6 +269,11 @@ struct AtQuery {
     /// day-to-day LLM browsing.
     #[serde(default)]
     verbose: bool,
+    /// Read from the staging index instead of the committed tree. Lets the
+    /// UI render a file that was uploaded or installed-from-marketplace
+    /// but not yet committed. `at` is ignored when `staged=true`.
+    #[serde(default)]
+    staged: bool,
 }
 
 async fn get_file(
@@ -281,7 +286,12 @@ async fn get_file(
         Ok(t) => t,
         Err(e) => return e,
     };
-    match tr.repo.show(&path, q.at.as_deref()) {
+    let result = if q.staged {
+        tr.repo.show_staged(&path)
+    } else {
+        tr.repo.show(&path, q.at.as_deref())
+    };
+    match result {
         Ok(ShowResult::Manifest {
             manifest, render, ..
         }) => {
@@ -332,7 +342,12 @@ async fn get_bytes(
         Ok(t) => t,
         Err(e) => return e,
     };
-    match tr.repo.bytes_of(&path, q.at.as_deref()) {
+    let result = if q.staged {
+        tr.repo.bytes_of_staged(&path)
+    } else {
+        tr.repo.bytes_of(&path, q.at.as_deref())
+    };
+    match result {
         Ok(bytes) => (
             [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
             bytes,
@@ -389,7 +404,12 @@ async fn tree_root(
         Ok(t) => t,
         Err(e) => return e,
     };
-    match tr.repo.ls("", q.at.as_deref(), q.recursive) {
+    let result = if q.staged {
+        tr.repo.ls_staged()
+    } else {
+        tr.repo.ls("", q.at.as_deref(), q.recursive)
+    };
+    match result {
         Ok(entries) => {
             if q.verbose {
                 ok_json(entries)
@@ -411,7 +431,13 @@ async fn tree_path(
         Ok(t) => t,
         Err(e) => return e,
     };
-    match tr.repo.ls(&path, q.at.as_deref(), q.recursive) {
+    let result = if q.staged {
+        // Staged listing ignores subpath; the index is path-flat.
+        tr.repo.ls_staged()
+    } else {
+        tr.repo.ls(&path, q.at.as_deref(), q.recursive)
+    };
+    match result {
         Ok(entries) => {
             if q.verbose {
                 ok_json(entries)
