@@ -1,4 +1,5 @@
-import { getToken, clearToken, auth } from './auth';
+import { getToken, clearToken, auth, startWorkosRefresh } from './auth';
+import { get as storeGet } from 'svelte/store';
 import type {
   AddResult,
   AuditResponse,
@@ -54,7 +55,11 @@ function buildUrl(path: string, query?: RequestOptions['query']): string {
 
 export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { ...(opts.headers ?? {}) };
-  if (!opts.noAuth) {
+  // In session mode the browser sends the `omp_session` cookie automatically;
+  // attaching a stale `Authorization` header would just be noise (and the
+  // gateway resolves cookies first anyway).
+  const inSessionMode = storeGet(auth).mode === 'session';
+  if (!opts.noAuth && !inSessionMode) {
     const tok = getToken();
     if (tok) headers['Authorization'] = `Bearer ${tok}`;
   }
@@ -62,13 +67,22 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
     method: opts.method ?? 'GET',
     headers,
     body: opts.body ?? null,
-    signal: opts.signal
+    signal: opts.signal,
+    credentials: 'same-origin'
   });
 
   if (resp.status === 401) {
-    // A token-bearing call that came back 401 means the token is bad
-    // (revoked, expired, or wrong tenant). Clear and re-prompt.
-    if (!opts.noAuth && getToken()) {
+    const currentMode = storeGet(auth).mode;
+    if (currentMode === 'session' || currentMode === 'workos') {
+      // WorkOS-deployment 401: cookie expired/rotated, or this is the
+      // first call after sign-out. Bounce through `/auth/refresh` as a
+      // top-level navigation; a `fetch` retry can't follow the OIDC chain.
+      // We never fall back to the token-paste modal in a WorkOS deployment.
+      const here = typeof location !== 'undefined' ? location.pathname + location.search : '/ui/';
+      startWorkosRefresh(here);
+    } else if (!opts.noAuth && getToken()) {
+      // Token-mode deployment, token-bearing call came back 401 → token is
+      // bad. Clear and re-prompt for a fresh paste.
       clearToken();
       auth.update((s) => ({ ...s, mode: 'token-required' }));
     }
@@ -139,9 +153,11 @@ export const getBytesUrl = (path: string, params: { at?: string } = {}): string 
 
 export const fetchBytes = async (path: string, params: { at?: string } = {}, signal?: AbortSignal): Promise<Response> => {
   const headers: Record<string, string> = {};
-  const tok = getToken();
-  if (tok) headers['Authorization'] = `Bearer ${tok}`;
-  const resp = await fetch(getBytesUrl(path, params), { headers, signal });
+  if (storeGet(auth).mode !== 'session') {
+    const tok = getToken();
+    if (tok) headers['Authorization'] = `Bearer ${tok}`;
+  }
+  const resp = await fetch(getBytesUrl(path, params), { headers, signal, credentials: 'same-origin' });
   if (!resp.ok) await throwFromResponse(resp);
   return resp;
 };

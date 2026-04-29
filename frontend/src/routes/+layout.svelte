@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { base } from '$app/paths';
-  import { auth, probeAuth, setToken, clearToken } from '$lib/auth';
+  import { auth, probeAuth, setToken, clearToken, startWorkosLogin } from '$lib/auth';
   import { watch, type WatchHandle } from '$lib/sse';
   import type { WatchEvent } from '$lib/types';
   import { relativeTime } from '$lib/format';
@@ -15,6 +15,8 @@
   let healthOk = true;
 
   $: showTokenModal = $auth.mode === 'token-required' && !$auth.token;
+  $: showWorkosGate = $auth.mode === 'workos';
+  $: showLoginGate = showTokenModal || showWorkosGate;
 
   const navLinks = [
     { href: '/', label: 'Tree' },
@@ -101,10 +103,18 @@
       <span class="auth-badge">
         {#if $auth.mode === 'no-auth'}
           <span class="tag">no-auth</span>
+        {:else if $auth.mode === 'session'}
+          <form method="POST" action="/auth/logout" style="display: inline">
+            <button class="btn btn--ghost btn--sm" type="submit" title="Sign out of WorkOS">
+              <span class="tag tag--accent">signed in</span>
+            </button>
+          </form>
         {:else if $auth.token}
           <button class="btn btn--ghost btn--sm" on:click={logoutClick} title="Clear token">
             <span class="tag tag--accent">token set</span>
           </button>
+        {:else if $auth.mode === 'workos'}
+          <span class="tag tag--danger">signed out</span>
         {:else}
           <span class="tag tag--danger">no token</span>
         {/if}
@@ -114,7 +124,7 @@
 
   <slot />
 
-  {#if !showTokenModal}
+  {#if !showLoginGate}
     <aside class="watch-panel" class:closed={!panelOpen}>
       <header>
         <button
@@ -146,6 +156,24 @@
         </div>
       {/if}
     </aside>
+  {/if}
+
+  {#if showWorkosGate}
+    <div class="modal-overlay">
+      <div class="modal">
+        <h2>Sign in</h2>
+        <p class="muted text-sm">
+          This deployment uses WorkOS AuthKit. Click below to authenticate
+          with your organization's identity provider.
+        </p>
+        <div class="flex flex--between" style="margin-top: 16px">
+          <span class="text-xs soft">Hosted login at <code>auth.workos.com</code>.</span>
+          <button class="btn btn--primary" type="button" on:click={() => startWorkosLogin(currentPath)}>
+            Sign in with WorkOS
+          </button>
+        </div>
+      </div>
+    </div>
   {/if}
 
   {#if showTokenModal}

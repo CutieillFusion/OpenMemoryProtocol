@@ -58,6 +58,20 @@ gateway:
   allowDevTokens: true
   # tokens: [{tokenSha256: "<hex>", tenant: "alice"}, ...]
   tokens: []
+  # WorkOS AuthKit (per docs/design/22-workos-auth.md). When `enabled` is
+  # false, the gateway runs Bearer-only — identical to the pre-WorkOS design.
+  workos:
+    enabled: false
+    clientId: ""
+    issuerUrl: "https://api.workos.com"
+    redirectUri: ""
+    sessionTtlSeconds: 3600
+    refreshGraceSeconds: 86400
+    # Reference an existing Kubernetes Secret holding the WorkOS client
+    # secret. The chart wires `WORKOS_CLIENT_SECRET` from `existingSecret`/
+    # `existingSecretKey`; the gateway picks it up at startup.
+    existingSecret: ""
+    existingSecretKey: "client-secret"
 
 # Set true to disable a component for tests / partial deployments.
 omp_server_only: false

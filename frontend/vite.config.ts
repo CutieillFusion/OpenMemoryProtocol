@@ -23,7 +23,11 @@ const apiPaths = [
   '/startupz',
   '/metrics',
   '/test',
-  '/probes'
+  '/probes',
+  // OIDC routes (per `docs/design/22-workos-auth.md`). Cookies set on
+  // `/auth/callback` need to land on the same origin as the API calls, so
+  // proxy `/auth/*` through to the gateway in dev too.
+  '/auth'
 ];
 
 const target = process.env.OMP_DEV_BACKEND ?? 'http://127.0.0.1:8000';

@@ -20,6 +20,14 @@ data:
     "{{ .tokenSha256 }}" = "{{ .tenant }}"
     {{- end }}
     {{- end }}
+    {{- if .Values.gateway.workos.enabled }}
+    [workos]
+    client_id = "{{ .Values.gateway.workos.clientId }}"
+    issuer_url = "{{ .Values.gateway.workos.issuerUrl }}"
+    redirect_uri = "{{ .Values.gateway.workos.redirectUri }}"
+    session_ttl_seconds = {{ .Values.gateway.workos.sessionTtlSeconds }}
+    refresh_grace_seconds = {{ .Values.gateway.workos.refreshGraceSeconds }}
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -52,6 +60,14 @@ spec:
           ports:
             - name: http
               containerPort: {{ .Values.gateway.port }}
+          {{- if and .Values.gateway.workos.enabled .Values.gateway.workos.existingSecret }}
+          env:
+            - name: WORKOS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gateway.workos.existingSecret }}
+                  key: {{ .Values.gateway.workos.existingSecretKey }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

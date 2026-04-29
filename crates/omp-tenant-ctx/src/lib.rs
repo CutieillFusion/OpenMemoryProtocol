@@ -119,6 +119,13 @@ impl GatewaySigner {
         self.key.verifying_key()
     }
 
+    /// Sign arbitrary bytes with the gateway's Ed25519 key. Used by the
+    /// session-cookie codec (`omp-gateway::auth`) to reuse the same key as
+    /// the `TenantContext` envelope without exposing the raw `SigningKey`.
+    pub fn sign_bytes(&self, msg: &[u8]) -> [u8; 64] {
+        self.key.sign(msg).to_bytes()
+    }
+
     /// Build a context for the named tenant valid until `exp_unix`. Signing
     /// happens here; the resulting context is ready to encode-and-send.
     pub fn issue(

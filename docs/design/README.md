@@ -28,6 +28,7 @@ Start with the overview, then read the technical docs in order — each builds o
 20. [**19-web-frontend.md**](./19-web-frontend.md) — Web UI as a SvelteKit static bundle embedded in the gateway via `rust-embed`; full API parity; minimalist aesthetic lifted from `~/personal-website`; no CORS, no second origin.
 21. [**20-server-side-probes.md**](./20-server-side-probes.md) — Tenants POST Rust probe source through the UI; new `omp-builder` microservice compiles in a sandboxed environment with a vendored dep whitelist; output `.wasm` plus source land in the tree as a normal commit. Also wires the engine to actually load probes from the tree at ingest (a prerequisite gap closed in the same change).
 22. [**21-schema-reprobe.md**](./21-schema-reprobe.md) — A schema commit auto-rebuilds every existing manifest of that file_type in the same atomic commit, so newly-added fields populate retroactively. Field-level reuse + per-pass probe-output cache keep the cost proportional to *what changed*, not to total schema size; per-file failures isolate from the commit.
+23. [**22-workos-auth.md**](./22-workos-auth.md) — WorkOS AuthKit as the user-facing auth path alongside the existing Bearer-token registry; `organization_id` becomes `tenant_id` 1:1; sessions are Ed25519-signed cookies (no DB, no JWT lib); CLI and machine clients unchanged. Supersedes the "no OAuth" non-goal in docs 11 and 19 for browser users.
 
 ## How to give feedback
 
@@ -67,3 +68,4 @@ If a design decision spans multiple docs and you want to revisit it, flag it at 
 | 19-web-frontend | SvelteKit static UI embedded in the gateway via `rust-embed`; serves `/ui/*`; bearer-token auth with `--no-auth` probe fallback; same minimalist aesthetic as `~/personal-website`. |
 | 20-server-side-probes | New `omp-builder` microservice compiles tenant-supplied Rust source to WASM in a sandboxed, offline-cargo environment; engine extended to load probes from the tree at ingest; per-tenant isolation, in-memory job state, SSE build logs. |
 | 21-schema-reprobe | Schema commits atomically rebuild every existing manifest of that file_type in the same commit; field-level reuse skips probes whose Source didn't change; per-pass cache dedups identical (source, probe, args) tuples; per-file failures don't block the commit. |
+| 22-workos-auth | WorkOS AuthKit for browser users; `organization_id` = `tenant_id`; signed-cookie sessions reusing the `omp-tenant-ctx` Ed25519 key; Bearer tokens stay for the CLI and M2M; downstream services see the same `TenantContext` as today. |

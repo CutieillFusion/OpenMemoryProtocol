@@ -20,7 +20,7 @@ use axum::{
     extract::{Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
-    routing::any,
+    routing::{any, get},
     Router,
 };
 use omp_core::registry::hash_token;
@@ -28,6 +28,7 @@ use omp_tenant_ctx::GatewaySigner;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod auth;
 #[cfg(feature = "embed-ui")]
 mod ui;
 
@@ -52,6 +53,12 @@ pub struct GatewayConfig {
     /// `503 builder_unavailable`. See `docs/design/20-server-side-probes.md`.
     #[serde(default)]
     pub builder: Option<String>,
+    /// Optional WorkOS / generic-OIDC config. When `None`, the gateway
+    /// behaves identically to the pre-WorkOS design — only Bearer tokens are
+    /// resolved, no `/auth/*` routes are mounted. See
+    /// `docs/design/22-workos-auth.md`.
+    #[serde(default)]
+    pub workos: Option<auth::WorkOsConfig>,
 }
 
 impl GatewayConfig {
@@ -66,10 +73,21 @@ pub struct GatewayState {
     pub config: Arc<GatewayConfig>,
     pub signer: Arc<GatewaySigner>,
     pub client: reqwest::Client,
+    /// Discovered OIDC endpoints + the WorkOS config block. `None` when the
+    /// feature is off (matches `config.workos.is_none()`).
+    pub oidc: Option<Arc<auth::OidcRuntime>>,
 }
 
 impl GatewayState {
     pub fn new(config: GatewayConfig, signer: GatewaySigner) -> Self {
+        Self::new_with_oidc(config, signer, None)
+    }
+
+    pub fn new_with_oidc(
+        config: GatewayConfig,
+        signer: GatewaySigner,
+        oidc: Option<auth::OidcRuntime>,
+    ) -> Self {
         let client = reqwest::Client::builder()
             .pool_idle_timeout(std::time::Duration::from_secs(60))
             .build()
@@ -78,11 +96,22 @@ impl GatewayState {
             config: Arc::new(config),
             signer: Arc::new(signer),
             client,
+            oidc: oidc.map(Arc::new),
         }
     }
 
-    /// Resolve a Bearer token to a tenant id, if recognized.
+    /// Resolve the request to a tenant id. Cookie path runs first; Bearer
+    /// path runs second so a stale token never overrides a live session
+    /// (per `docs/design/22-workos-auth.md` §`resolve_tenant`).
     pub fn resolve_tenant(&self, headers: &HeaderMap) -> Option<String> {
+        if let Some(claims) = auth::resolve_session_cookie(headers, &self.signer.verifying_key()) {
+            return Some(claims.tenant);
+        }
+        self.resolve_bearer_token(headers)
+    }
+
+    /// Resolve a Bearer token to a tenant id, if recognized.
+    pub fn resolve_bearer_token(&self, headers: &HeaderMap) -> Option<String> {
         let auth = headers
             .get(axum::http::header::AUTHORIZATION)?
             .to_str()
@@ -100,6 +129,20 @@ impl GatewayState {
         self.config.tokens.get(&hash_token(token)).cloned()
     }
 
+    /// What the frontend's `/status` probe needs to render the right gate.
+    /// The gateway always fronts bearer-auth-required shards unless WorkOS is
+    /// on, so the choice collapses to two values. ("no-auth" only makes sense
+    /// when the shard is reached directly without a gateway in front, which
+    /// is the embedded single-tenant case the frontend handles via a 200
+    /// fallthrough at the proxy layer.)
+    pub fn auth_mode_label(&self) -> &'static str {
+        if self.oidc.is_some() {
+            "workos"
+        } else {
+            "token"
+        }
+    }
+
     /// Pick a shard for a tenant by sha256(tenant) mod N.
     pub fn shard_for(&self, tenant: &str) -> Option<&str> {
         if self.config.shards.is_empty() {
@@ -115,7 +158,20 @@ impl GatewayState {
 }
 
 pub fn router(state: GatewayState) -> Router {
-    let r = Router::new().route("/healthz", any(healthz));
+    let mut r = Router::new()
+        .route("/healthz", any(healthz))
+        .route("/status", any(status_handler));
+
+    // OIDC routes only when WorkOS is configured. `/auth/logout` accepts
+    // both GET and POST so the frontend can use a top-level form post and
+    // the browser can follow the redirect chain through `end_session_endpoint`.
+    if state.oidc.is_some() {
+        r = r
+            .route("/auth/login", get(auth::login))
+            .route("/auth/callback", get(auth::callback))
+            .route("/auth/refresh", get(auth::refresh))
+            .route("/auth/logout", get(auth::logout).post(auth::logout));
+    }
 
     // Mount the embedded SvelteKit UI at `/`, `/ui`, and `/ui/*`. These
     // routes win over the proxy fallback because they're explicit. API
@@ -125,6 +181,38 @@ pub fn router(state: GatewayState) -> Router {
     let r = r.merge(ui::router::<GatewayState>());
 
     r.fallback(any(proxy)).with_state(state)
+}
+
+/// `/status` has two callers with two needs:
+///   1. The frontend's `probeAuth` (unauthed): wants to know `auth_mode` so
+///      it can render the right gate, without needing a token first.
+///   2. Authenticated app code: wants the shard's `RepoStatus` JSON.
+///
+/// Resolution: if the request is unauthed, answer locally with `{ok,
+/// auth_mode}` in WorkOS mode (the probe contract) or 401 in token mode
+/// (preserves the pre-WorkOS contract: "401 means a token is required"). If
+/// the request is authed, fall through to the same proxy code path as every
+/// other API endpoint, returning the shard's `RepoStatus`.
+async fn status_handler(State(state): State<GatewayState>, req: Request<Body>) -> Response {
+    let tenant = state.resolve_tenant(req.headers());
+    if tenant.is_none() {
+        return match state.auth_mode_label() {
+            "workos" => (
+                StatusCode::OK,
+                axum::Json(serde_json::json!({
+                    "ok": true,
+                    "auth_mode": "workos",
+                })),
+            )
+                .into_response(),
+            _ => error_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "missing or unknown bearer token",
+            ),
+        };
+    }
+    proxy(State(state), req).await
 }
 
 async fn healthz() -> Response {

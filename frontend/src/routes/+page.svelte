@@ -53,8 +53,19 @@
       repoStatus = st;
       latestCommit = recent[0] ?? null;
     } catch (e) {
-      error = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
-      entries = [];
+      // A fresh tenant repo with zero commits is the expected state on first
+      // login — it's not an error worth showing the user. Treat it as the
+      // empty case (the table already renders an "empty" row).
+      const isNoCommits =
+        e instanceof ApiError && e.code === 'not_found' && /no commits/i.test(e.message);
+      if (isNoCommits) {
+        entries = [];
+        repoStatus = null;
+        latestCommit = null;
+      } else {
+        error = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
+        entries = [];
+      }
     } finally {
       loading = false;
     }

@@ -34,7 +34,23 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    let config = GatewayConfig::from_toml_path(&args.config).context("loading gateway config")?;
+    let mut config =
+        GatewayConfig::from_toml_path(&args.config).context("loading gateway config")?;
+
+    // Allow the WorkOS client secret to come from the environment instead of
+    // the TOML file (per `docs/design/22-workos-auth.md` §Build & deployment).
+    if let Some(ref mut wcfg) = config.workos {
+        if wcfg.client_secret.is_empty() {
+            if let Ok(s) = std::env::var("WORKOS_CLIENT_SECRET") {
+                wcfg.client_secret = s;
+            }
+        }
+        if wcfg.client_secret.is_empty() {
+            tracing::warn!(
+                "workos config present but client_secret is empty (set WORKOS_CLIENT_SECRET)"
+            );
+        }
+    }
 
     let signer = if let Some(p) = args.signing_key {
         let seed = std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?;
@@ -48,7 +64,22 @@ async fn main() -> Result<()> {
         GatewaySigner::generate()
     };
 
-    let state = GatewayState::new(config, signer);
+    let oidc = if let Some(wcfg) = config.workos.clone() {
+        match omp_gateway::auth::OidcRuntime::discover(wcfg).await {
+            Ok(rt) => {
+                tracing::info!(issuer = %rt.config.issuer_url, "oidc discovery succeeded");
+                Some(rt)
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "oidc discovery failed; auth routes will be disabled");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let state = GatewayState::new_with_oidc(config, signer, oidc);
     let app = router(state);
 
     tracing::info!(bind = %args.bind, "omp-gateway listening");

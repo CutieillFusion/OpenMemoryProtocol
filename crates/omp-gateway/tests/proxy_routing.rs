@@ -54,6 +54,7 @@ async fn routes_alice_and_bob_to_different_shards() {
         tokens,
         allow_dev_tokens: false,
         builder: None,
+        workos: None,
     };
     let signer = GatewaySigner::generate();
     let verifying = signer.verifying_key();
@@ -208,6 +209,7 @@ async fn routes_alice_and_bob_to_different_shards() {
         tokens,
         allow_dev_tokens: false,
         builder: None,
+        workos: None,
     };
     let signer2 = GatewaySigner::generate();
     let vk2 = signer2.verifying_key();
@@ -242,6 +244,7 @@ async fn rejects_unauthorized_requests() {
         tokens: HashMap::new(),
         allow_dev_tokens: false,
         builder: None,
+        workos: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let app = gateway_router(state);
@@ -281,6 +284,7 @@ async fn dev_tokens_resolve_when_enabled() {
         tokens: HashMap::new(),
         allow_dev_tokens: true,
         builder: None,
+        workos: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let app = gateway_router(state);
@@ -342,6 +346,7 @@ async fn forwards_sse_responses_as_a_stream() {
         tokens,
         allow_dev_tokens: false,
         builder: None,
+        workos: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let listener2 = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -417,6 +422,7 @@ async fn serves_embedded_ui_at_slash_ui() {
         tokens: HashMap::new(),
         allow_dev_tokens: false,
         builder: None,
+        workos: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -533,6 +539,7 @@ async fn routes_probes_build_to_builder() {
         tokens,
         allow_dev_tokens: false,
         builder: Some(builder_url),
+        workos: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -584,6 +591,7 @@ async fn probes_build_returns_503_when_no_builder_configured() {
         tokens,
         allow_dev_tokens: false,
         builder: None,
+        workos: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -628,6 +636,7 @@ async fn translates_412_to_409() {
         tokens,
         allow_dev_tokens: false,
         builder: None,
+        workos: None,
     };
     let state = GatewayState::new(cfg, GatewaySigner::generate());
     let listener2 = TcpListener::bind("127.0.0.1:0").await.unwrap();
