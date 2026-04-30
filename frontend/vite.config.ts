@@ -24,9 +24,8 @@ const apiPaths = [
   '/metrics',
   '/test',
   '/probes',
-  // OIDC routes (per `docs/design/22-workos-auth.md`). Cookies set on
-  // `/auth/callback` need to land on the same origin as the API calls, so
-  // proxy `/auth/*` through to the gateway in dev too.
+  // OIDC routes. Cookies set on `/auth/callback` need to land on the same
+  // origin as the API calls, so proxy `/auth/*` through to the gateway in dev too.
   '/auth'
 ];
 

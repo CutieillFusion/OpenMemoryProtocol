@@ -124,11 +124,17 @@ export type SchemaFieldType =
   | 'list[datetime]'
   | 'object';
 
+export type SchemaFieldSource = 'constant' | 'probe' | 'user_provided' | 'field';
+
 export interface SchemaField {
   name: string;
   type: SchemaFieldType | string;
   required: boolean;
   description?: string;
+  /** One of constant / probe / user_provided / field. */
+  source: SchemaFieldSource | string;
+  /** For source = "probe", the qualified probe name `<ns>.<name>`. */
+  probe?: string;
 }
 
 export interface Schema {

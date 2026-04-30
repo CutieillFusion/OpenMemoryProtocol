@@ -62,15 +62,20 @@
 <section class="page">
   <header class="page-header">
     <div class="page-title-row">
-      <h1>Marketplace</h1>
-      <a class="btn" href="{base}/marketplace/upload">Upload existing probe</a>
+      <h1>Probe marketplace</h1>
+      <div class="page-actions">
+        <a class="btn btn--ghost" href="{base}/schema-marketplace">Schema marketplace →</a>
+        <a class="btn" href="{base}/marketplace/upload">Upload existing probe</a>
+      </div>
     </div>
     <p class="muted">
-      Install community-published probes into your tenant. Per
-      <code>docs/design/23-probe-marketplace.md</code>, each probe is a folder
+      Install community-published probes into your tenant. A probe is a
+      sandboxed WASM module that extracts one structural fact from a file's
+      bytes (size, MIME, sha256, page-count, etc.). Each probe is a folder
       (<code>probe.wasm</code> + <code>probe.toml</code> + optional
-      <code>README.md</code>) addressed by content hash. Click <em>view</em> to
-      inspect the manifest and source before <em>install</em>.
+      <code>README.md</code>) addressed by content hash. Schemas
+      (<a class="link" href="{base}/schema-marketplace">browse</a>) compose
+      probes into per-file-type manifests.
     </p>
   </header>
 
@@ -123,7 +128,7 @@
               <span class="soft">· {fmtDate(p.published_at)}</span>
             </div>
             <div class="card-actions">
-              <a class="btn btn--ghost btn--sm" href="{base}/marketplace/{p.id}">view</a>
+              <a class="btn btn--ghost btn--sm" href="{base}/marketplace/{p.id}" title="Inspect probe.toml, README, and source/lib.rs">view source</a>
               <button
                 class="btn btn--primary btn--sm"
                 disabled={installing !== null}
@@ -153,6 +158,10 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
+  }
+  .page-actions {
+    display: flex;
+    gap: 8px;
   }
   .card-actions {
     display: flex;

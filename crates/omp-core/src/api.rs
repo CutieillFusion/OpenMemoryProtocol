@@ -31,6 +31,59 @@ use crate::walker;
 /// Maps a field name → a user-provided value.
 pub type Fields = BTreeMap<String, FieldValue>;
 
+/// Infer a render hint for a blob whose own bytes are not interpretable as
+/// a manifest — i.e. files in `schemas/`, `probes/`, and `omp.toml`. The
+/// schema's own `[render]` block only applies to file_types declared in the
+/// schema; the schema *file itself* needs a separate hint or the UI shows
+/// "Binary file — no inline preview" for what is plainly readable text.
+fn render_for_blob_path(path: &str) -> RenderHint {
+    let lower = path.to_lowercase();
+    let kind = if lower.ends_with(".md") || lower.ends_with(".markdown") {
+        RenderKind::Markdown
+    } else if lower.ends_with(".toml")
+        || lower.ends_with(".txt")
+        || lower.ends_with(".json")
+        || lower.ends_with(".yaml")
+        || lower.ends_with(".yml")
+        || lower.ends_with(".rs")
+        || lower.ends_with(".py")
+        || lower.ends_with(".ts")
+        || lower.ends_with(".js")
+        || lower.ends_with(".sh")
+        || lower.ends_with(".css")
+        || lower.ends_with(".html")
+    {
+        RenderKind::Text
+    } else {
+        RenderKind::Binary
+    };
+    RenderHint {
+        kind,
+        max_inline_bytes: None,
+    }
+}
+
+/// If `path` is `schemas/<file_type>/schema.toml` for a single-segment
+/// `<file_type>`, return the file_type. Otherwise `None`. The per-folder
+/// layout is documented in `docs/design/25-schema-marketplace.md`.
+fn schema_file_type_from_path(path: &str) -> Option<&str> {
+    let stem = path.strip_prefix("schemas/")?.strip_suffix("/schema.toml")?;
+    if stem.is_empty() || stem.contains('/') {
+        return None;
+    }
+    Some(stem)
+}
+
+/// Same as `schema_file_type_from_path` but for a tree-walked entry name
+/// already relative to `schemas/` (e.g. `text/schema.toml`).
+fn schema_file_type_from_tree_name(name: &str) -> Option<&str> {
+    let stem = name.strip_suffix("/schema.toml")?;
+    if stem.is_empty() || stem.contains('/') {
+        return None;
+    }
+    Some(stem)
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind")]
 pub enum AddResult {
@@ -152,7 +205,7 @@ pub struct ReprobeSkip {
 }
 
 /// Per-file_type summary returned alongside a successful commit when one or
-/// more `schemas/<X>.schema` blobs in the same commit triggered a reprobe.
+/// more `schemas/<X>/schema.toml` blobs in the same commit triggered a reprobe.
 #[derive(Clone, Debug, Serialize)]
 pub struct ReprobeSummary {
     pub file_type: String,
@@ -384,11 +437,7 @@ impl Repo {
         let mode = walker::classify_path(Path::new(path));
         if mode == Mode::Blob {
             // Schemas get pre-flight validated; `omp.toml` gets parsed-validated.
-            if path.starts_with("schemas/") && path.ends_with(".schema") {
-                let stem = path
-                    .strip_prefix("schemas/")
-                    .and_then(|s| s.strip_suffix(".schema"))
-                    .unwrap_or("");
+            if let Some(stem) = schema_file_type_from_path(path) {
                 let parsed = Schema::parse(bytes, stem)?;
                 let probe_names = self.current_probe_names()?;
                 parsed.validate_probe_refs(&probe_names)?;
@@ -1067,10 +1116,7 @@ impl Repo {
                 path: path.to_string(),
                 blob_hash: hash,
                 size: content.len(),
-                render: RenderHint {
-                    kind: RenderKind::Binary,
-                    max_inline_bytes: None,
-                },
+                render: render_for_blob_path(path),
             }),
             // The index never contains tree or commit objects; if it
             // somehow does, refuse rather than guess.
@@ -1152,10 +1198,7 @@ impl Repo {
                     path: path.to_string(),
                     blob_hash: hash,
                     size: content.len(),
-                    render: RenderHint {
-                        kind: RenderKind::Binary,
-                        max_inline_bytes: None,
-                    },
+                    render: render_for_blob_path(path),
                 })
             }
             Mode::Tree => Ok(ShowResult::Tree {
@@ -1178,7 +1221,7 @@ impl Repo {
         let Some(root) = tree_root else {
             return fallback;
         };
-        let path = format!("schemas/{file_type}.schema");
+        let path = format!("schemas/{file_type}/schema.toml");
         let lookup = match paths::get_at(&self.store, &path, root) {
             Ok(v) => v,
             Err(_) => return fallback,
@@ -1461,18 +1504,9 @@ impl Repo {
             if !matches!(change.kind, StagedKind::Upsert) {
                 continue;
             }
-            let Some(stem) = change
-                .path
-                .strip_prefix("schemas/")
-                .and_then(|p| p.strip_suffix(".schema"))
-            else {
+            let Some(stem) = schema_file_type_from_path(&change.path) else {
                 continue;
             };
-            // Schema staged at `schemas/<stem>.schema`. Stem must be a
-            // simple filename, not a nested path.
-            if stem.contains('/') {
-                continue;
-            }
             let Some(hash) = change.hash else { continue };
             staged_schemas.push((stem.to_string(), hash));
         }
@@ -2062,9 +2096,10 @@ impl Repo {
     }
 
     /// List schemas at the given ref (default HEAD) as wire-format summaries.
-    /// Walks the `schemas/` subtree, parses each `*.schema` blob, and falls
-    /// back to the working-directory `schemas/` dir for the pre-first-commit
-    /// case (mirrors `load_all_schemas_with_key`). Result is sorted by
+    /// Walks the `schemas/` subtree, parses each `<file_type>/schema.toml`
+    /// blob, and falls back to the working-directory `schemas/` dir for the
+    /// pre-first-commit case (mirrors `load_all_schemas_with_key`). Per-folder
+    /// layout per `docs/design/25-schema-marketplace.md`. Result is sorted by
     /// file_type for stable output.
     pub fn list_schemas(&self, at: Option<&str>) -> Result<Vec<crate::schema::SchemaSummary>> {
         let mut by_type: BTreeMap<String, crate::schema::SchemaSummary> = BTreeMap::new();
@@ -2077,7 +2112,7 @@ impl Repo {
                     if mode != Mode::Blob {
                         continue;
                     }
-                    let Some(stem) = name.strip_suffix(".schema") else {
+                    let Some(stem) = schema_file_type_from_tree_name(&name) else {
                         continue;
                     };
                     if let Some((_, content)) = self.store.get(&hash)? {
@@ -2096,11 +2131,15 @@ impl Repo {
                     fs::read_dir(&schemas_dir).map_err(|e| OmpError::io(&schemas_dir, e))?
                 {
                     let entry = entry.map_err(|e| OmpError::io(&schemas_dir, e))?;
-                    let p = entry.path();
-                    if p.extension().and_then(|s| s.to_str()) != Some("schema") {
+                    let dir = entry.path();
+                    if !dir.is_dir() {
                         continue;
                     }
-                    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                    let stem = dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    let p = dir.join("schema.toml");
+                    if !p.is_file() {
+                        continue;
+                    }
                     let bytes = fs::read(&p).map_err(|e| OmpError::io(&p, e))?;
                     if let Ok(s) = Schema::parse(&bytes, stem) {
                         by_type
@@ -2341,7 +2380,7 @@ impl Repo {
         file_type: &str,
         path_key: Option<&[u8; 32]>,
     ) -> Result<Option<Vec<u8>>> {
-        let path = format!("schemas/{file_type}.schema");
+        let path = format!("schemas/{file_type}/schema.toml");
         if let Some(root) = self.head_tree()? {
             if let Some((Mode::Blob, h)) =
                 paths::get_at_with_key(&self.store, &path, &root, path_key)?
@@ -2377,7 +2416,7 @@ impl Repo {
                     if mode != Mode::Blob {
                         continue;
                     }
-                    if let Some(stem) = name.strip_suffix(".schema") {
+                    if let Some(stem) = schema_file_type_from_tree_name(&name) {
                         if let Some((_, content)) = self.store.get(&hash)? {
                             if let Ok(s) = Schema::parse(&content, stem) {
                                 out.insert(s.file_type.clone(), s);
@@ -2392,13 +2431,18 @@ impl Repo {
         if schemas_dir.is_dir() {
             for entry in fs::read_dir(&schemas_dir).map_err(|e| OmpError::io(&schemas_dir, e))? {
                 let entry = entry.map_err(|e| OmpError::io(&schemas_dir, e))?;
-                let p = entry.path();
-                if p.extension().and_then(|s| s.to_str()) == Some("schema") {
-                    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                    let bytes = fs::read(&p).map_err(|e| OmpError::io(&p, e))?;
-                    if let Ok(s) = Schema::parse(&bytes, stem) {
-                        out.entry(s.file_type.clone()).or_insert(s);
-                    }
+                let dir = entry.path();
+                if !dir.is_dir() {
+                    continue;
+                }
+                let stem = dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                let p = dir.join("schema.toml");
+                if !p.is_file() {
+                    continue;
+                }
+                let bytes = fs::read(&p).map_err(|e| OmpError::io(&p, e))?;
+                if let Ok(s) = Schema::parse(&bytes, stem) {
+                    out.entry(s.file_type.clone()).or_insert(s);
                 }
             }
         }

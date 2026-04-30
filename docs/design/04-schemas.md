@@ -4,7 +4,7 @@ Schemas are the core of OMP's extensibility. A schema defines what a manifest fo
 
 ## Where schemas live
 
-A schema lives at `schemas/<file_type>.schema` at the root of the repo's working tree. Example: `schemas/pdf.schema`, `schemas/audio.schema`, `schemas/my-custom-type.schema`.
+A schema lives at `schemas/<file_type>/schema.toml` at the root of the repo's working tree. Example: `schemas/pdf/schema.toml`, `schemas/audio/schema.toml`, `schemas/my-custom-type/schema.toml`. The directory may also hold a `README.md` and an `examples/` subdirectory; see [`25-schema-marketplace.md`](./25-schema-marketplace.md) for the per-folder layout and the cutover from the earlier flat `schemas/<file_type>.schema` form.
 
 Schemas are committed like any other file — they show up in the root tree with mode `blob`, are versioned, and can be time-traveled. A repo at commit X has exactly the set of schemas defined in its tree at commit X; older commits had older schemas; branch B may have different schemas than branch A.
 
@@ -208,7 +208,7 @@ The manifest's `schema_hash` records exactly which schema object was used — so
 
 When a caller `POST`s a schema file (just another `POST /files` to a path under `schemas/`), OMP validates it *before* staging:
 
-- Top-level `file_type` matches filename.
+- Top-level `file_type` matches the schema's directory basename (i.e., `schemas/pdf/schema.toml` must declare `file_type = "pdf"`).
 - Every field's `source` is one of the four allowed values (`constant`, `probe`, `user_provided`, `field`); `fallback`, if present, is a nested table whose own `source` is likewise one of the four.
 - Every `probe` reference names a probe present at `probes/<namespace>/<name>.wasm` + `probes/<namespace>/<name>.probe.toml` in the current tree. Probe resolution time-travels automatically — at `--at <commit>`, the probes are whatever was in `probes/` at that commit.
 - Every `field` reference names another field in the same schema.

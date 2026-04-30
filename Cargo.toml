@@ -66,6 +66,7 @@ opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 tracing-opentelemetry = "0.28"
 omp-proto = { path = "crates/omp-proto" }
 omp-tenant-ctx = { path = "crates/omp-tenant-ctx" }
+omp-builder = { path = "crates/omp-builder" }
 rdkafka = { version = "0.36", features = ["cmake-build"] }
 futures = "0.3"
 async-stream = "0.3"

@@ -93,6 +93,10 @@ pub struct GatewayState {
     /// Discovered OIDC endpoints + the WorkOS config block. `None` when the
     /// feature is off (matches `config.workos.is_none()`).
     pub oidc: Option<Arc<auth::OidcRuntime>>,
+    /// In-memory TTL cache for WorkOS API-key validation results, keyed by
+    /// sha256(token). Empty when WorkOS isn't configured. See
+    /// `docs/design/24-per-user-api-keys.md`.
+    pub validation_cache: auth::ValidationCache,
 }
 
 impl GatewayState {
@@ -114,6 +118,7 @@ impl GatewayState {
             signer: Arc::new(signer),
             client,
             oidc: oidc.map(Arc::new),
+            validation_cache: auth::ValidationCache::new(),
         }
     }
 
@@ -142,11 +147,7 @@ impl GatewayState {
 
     /// Resolve a Bearer token to a tenant id, if recognized.
     pub fn resolve_bearer_token(&self, headers: &HeaderMap) -> Option<String> {
-        let auth = headers
-            .get(axum::http::header::AUTHORIZATION)?
-            .to_str()
-            .ok()?;
-        let token = auth.strip_prefix("Bearer ")?.trim();
+        let token = extract_bearer(headers)?;
 
         if self.config.allow_dev_tokens {
             if let Some(t) = token.strip_prefix("dev-") {
@@ -157,6 +158,35 @@ impl GatewayState {
         }
 
         self.config.tokens.get(&hash_token(token)).cloned()
+    }
+
+    /// Async resolution path used by every request handler. Tries the sync
+    /// path first (cookie / dev-token / static registry), then falls back
+    /// to the WorkOS API-key validation cache, then to a live WorkOS
+    /// validation call. Each successful WorkOS validation is cached for
+    /// `validation_cache_ttl_seconds` (default 60s). See
+    /// `docs/design/24-per-user-api-keys.md`.
+    pub async fn resolve_principal_async(&self, headers: &HeaderMap) -> Option<Principal> {
+        if let Some(p) = self.resolve_principal(headers) {
+            return Some(p);
+        }
+        let oidc = self.oidc.as_ref()?;
+        let token = extract_bearer(headers)?;
+        let key = auth::token_hash_bytes(token);
+        if let Some(tenant) = self.validation_cache.get(&key) {
+            return Some(Principal { tenant, sub: None });
+        }
+        let tenant = auth::validate_api_key(oidc, token).await?;
+        self.validation_cache.insert(
+            key,
+            tenant.clone(),
+            oidc.config.validation_cache_ttl_seconds,
+        );
+        Some(Principal { tenant, sub: None })
+    }
+
+    pub async fn resolve_tenant_async(&self, headers: &HeaderMap) -> Option<String> {
+        self.resolve_principal_async(headers).await.map(|p| p.tenant)
     }
 
     /// What the frontend's `/status` probe needs to render the right gate.
@@ -201,6 +231,7 @@ pub fn router(state: GatewayState) -> Router {
             .route("/auth/callback", get(auth::callback))
             .route("/auth/refresh", get(auth::refresh))
             .route("/auth/me", get(auth::me))
+            .route("/auth/widget-token", get(auth::widget_token))
             .route("/auth/logout", get(auth::logout).post(auth::logout));
     }
 
@@ -233,7 +264,7 @@ pub fn router(state: GatewayState) -> Router {
 /// the request is authed, fall through to the same proxy code path as every
 /// other API endpoint, returning the shard's `RepoStatus`.
 async fn status_handler(State(state): State<GatewayState>, req: Request<Body>) -> Response {
-    let tenant = state.resolve_tenant(req.headers());
+    let tenant = state.resolve_tenant_async(req.headers()).await;
     if tenant.is_none() {
         return match state.auth_mode_label() {
             "workos" => (
@@ -267,7 +298,7 @@ async fn healthz() -> Response {
 
 async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Response {
     // 1. Auth.
-    let principal = match state.resolve_principal(req.headers()) {
+    let principal = match state.resolve_principal_async(req.headers()).await {
         Some(p) => p,
         None => {
             return error_response(
@@ -280,9 +311,9 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
     let tenant = principal.tenant.clone();
 
     // 2. Pick the upstream by path prefix. `/probes/build*` lands on the
-    //    `omp-builder` service (per doc 20); `/marketplace/probes*` lands on
-    //    `omp-marketplace` (per doc 23); everything else flows to the
-    //    tenant's shard exactly as before.
+    //    `omp-builder` service; `/marketplace/*` (probes and schemas) lands
+    //    on `omp-marketplace`; everything else flows to the tenant's shard
+    //    exactly as before.
     let path_for_routing = req.uri().path();
     let upstream_base = if path_for_routing.starts_with("/probes/build") {
         match state.config.builder.as_deref() {
@@ -295,7 +326,7 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
                 );
             }
         }
-    } else if path_for_routing.starts_with("/marketplace/probes") {
+    } else if path_for_routing.starts_with("/marketplace/") {
         match state.config.marketplace.as_deref() {
             Some(url) => url.to_string(),
             None => {
@@ -452,6 +483,16 @@ async fn proxy(State(state): State<GatewayState>, req: Request<Body>) -> Respons
     })
 }
 
+fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+}
+
 fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
     (
         status,
@@ -477,7 +518,7 @@ async fn install_from_marketplace(
     axum::extract::Path(id): axum::extract::Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    let principal = match state.resolve_principal(&headers) {
+    let principal = match state.resolve_principal_async(&headers).await {
         Some(p) => p,
         None => {
             return error_response(

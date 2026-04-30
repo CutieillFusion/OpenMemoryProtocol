@@ -43,7 +43,7 @@ max_inline_bytes = 32768
 source = "user_provided"
 type = "string"
 "#;
-    std::fs::write(td.path().join("schemas/text.schema"), custom_text).unwrap();
+    std::fs::write(td.path().join("schemas/text/schema.toml"), custom_text).unwrap();
 
     stage_starter_artifacts(&repo);
     let mut u = Fields::new();
@@ -76,7 +76,7 @@ fn show_falls_back_to_binary_when_schema_missing() {
         .unwrap();
 
     // Now stage a delete of the schema, commit again.
-    repo.remove("schemas/text.schema").unwrap();
+    repo.remove("schemas/text/schema.toml").unwrap();
     repo.commit("drop schema", Some(fixed_author_at("2026-04-22T01:00:00Z")))
         .unwrap();
 
@@ -106,7 +106,7 @@ kind = "text"
 source = "user_provided"
 type = "string"
 "#;
-    std::fs::write(td.path().join("schemas/text.schema"), v1_schema).unwrap();
+    std::fs::write(td.path().join("schemas/text/schema.toml"), v1_schema).unwrap();
     stage_starter_artifacts(&repo);
     let mut u = Fields::new();
     u.insert("title".into(), FieldValue::String("v1".into()));
@@ -127,7 +127,7 @@ kind = "markdown"
 source = "user_provided"
 type = "string"
 "#;
-    repo.add("schemas/text.schema", v2_schema, None, None)
+    repo.add("schemas/text/schema.toml", v2_schema, None, None)
         .unwrap();
     let _c2 = repo
         .commit(

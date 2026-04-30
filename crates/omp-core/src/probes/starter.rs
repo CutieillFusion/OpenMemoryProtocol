@@ -57,7 +57,7 @@ pub const STARTER_PROBES: &[StarterProbe] = &[
 
 pub fn starter_schemas() -> Vec<(&'static str, &'static [u8])> {
     vec![(
-        "schemas/text.schema",
-        include_bytes!("../../starter-schemas/text.schema"),
+        "schemas/text/schema.toml",
+        include_bytes!("../../starter-schemas/text/schema.toml"),
     )]
 }

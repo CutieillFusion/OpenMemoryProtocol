@@ -27,7 +27,31 @@ mod catalog;
 use blobs::BlobStore;
 use catalog::{Catalog, CatalogEntry};
 
+mod schemas;
+
 const MAX_PUBLISH_BYTES: usize = 50 * 1024 * 1024; // 50 MiB per publish
+const DEFAULT_BUILD_WALL_CLOCK_SECS: u64 = 90;
+
+/// In-process build configuration used when a publisher uploads source.
+/// The marketplace runs cargo on its own pod (same approach as `omp-builder`)
+/// rather than calling out to the builder service, so the publish flow stays
+/// a single request: source in, wasm out (or 422 + log on failure).
+#[derive(Clone, Debug)]
+pub struct BuildSettings {
+    pub probe_common_path: PathBuf,
+    pub scratch_root: PathBuf,
+    pub wall_clock_secs: u64,
+}
+
+impl Default for BuildSettings {
+    fn default() -> Self {
+        Self {
+            probe_common_path: PathBuf::from("../../probes-src/probe-common"),
+            scratch_root: std::env::temp_dir().join("omp-marketplace-build"),
+            wall_clock_secs: DEFAULT_BUILD_WALL_CLOCK_SECS,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct MarketplaceState {
@@ -36,27 +60,49 @@ pub struct MarketplaceState {
 
 struct Inner {
     catalog: Mutex<Catalog>,
+    schema_catalog: Mutex<schemas::SchemaCatalog>,
     blobs: BlobStore,
     /// When `Some`, publish/yank endpoints require an `X-OMP-Tenant-Context`
     /// header signed by this key (the gateway's signer). When `None`, the
     /// service is in dev/demo mode — any context is accepted. The flag
     /// flips on the presence of `--verifying-key` at startup.
     verifier: Option<VerifyingKey>,
+    build: BuildSettings,
 }
 
 impl MarketplaceState {
-    pub fn open(data_root: PathBuf, verifier: Option<VerifyingKey>) -> Result<Self> {
-        let catalog_path = data_root.join("catalog.json");
+    pub fn open(
+        data_root: PathBuf,
+        verifier: Option<VerifyingKey>,
+        build: BuildSettings,
+    ) -> Result<Self> {
+        let catalog_path = data_root.join("catalog_probes.json");
+        let legacy_catalog_path = data_root.join("catalog.json");
+        // One-time migration: if the legacy single-catalog file exists and the
+        // new probes file does not, rename it. Saves operators a manual step
+        // when upgrading past the schema-marketplace split.
+        if !catalog_path.exists() && legacy_catalog_path.exists() {
+            std::fs::rename(&legacy_catalog_path, &catalog_path)?;
+        }
+        let schema_catalog_path = data_root.join("catalog_schemas.json");
         let blobs_root = data_root.join("blobs");
         let catalog = Catalog::open(&catalog_path)?;
+        let schema_catalog = schemas::SchemaCatalog::open(&schema_catalog_path)?;
         let blobs = BlobStore::open(&blobs_root)?;
+        std::fs::create_dir_all(&build.scratch_root)?;
         Ok(Self {
             inner: Arc::new(Inner {
                 catalog: Mutex::new(catalog),
+                schema_catalog: Mutex::new(schema_catalog),
                 blobs,
                 verifier,
+                build,
             }),
         })
+    }
+
+    pub(crate) fn blobs(&self) -> &BlobStore {
+        &self.inner.blobs
     }
 }
 
@@ -69,8 +115,12 @@ pub fn router(state: MarketplaceState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/marketplace/probes", get(list_probes).post(publish_probe))
-        .route("/marketplace/probes/:id", get(get_probe).delete(yank_probe))
+        .route(
+            "/marketplace/probes/:id",
+            get(get_probe).patch(patch_probe).delete(yank_probe),
+        )
         .route("/marketplace/probes/:id/blobs/:hash", get(get_blob))
+        .merge(schemas::router())
         .layer(DefaultBodyLimit::max(MAX_PUBLISH_BYTES))
         .with_state(state)
 }
@@ -87,7 +137,7 @@ async fn healthz() -> Response {
 // Auth helper — verify the gateway-issued TenantContext and pull `sub`.
 // ---------------------------------------------------------------------------
 
-fn require_authed_publisher(
+pub(crate) fn require_authed_publisher(
     state: &MarketplaceState,
     headers: &HeaderMap,
 ) -> Result<(String, String), Response> {
@@ -283,10 +333,10 @@ async fn publish_probe(
     let mut name = String::new();
     let mut version = String::new();
     let mut description: Option<String> = None;
-    let mut wasm: Option<Vec<u8>> = None;
     let mut manifest: Option<Vec<u8>> = None;
     let mut readme: Option<Vec<u8>> = None;
     let mut source: Option<Vec<u8>> = None;
+    let mut got_wasm_field = false;
 
     while let Ok(Some(field)) = form.next_field().await {
         let field_name = match field.name() {
@@ -298,12 +348,25 @@ async fn publish_probe(
             "name" => name = field.text().await.unwrap_or_default(),
             "version" => version = field.text().await.unwrap_or_default(),
             "description" => description = field.text().await.ok().filter(|s| !s.is_empty()),
-            "wasm" => wasm = field.bytes().await.ok().map(|b| b.to_vec()),
             "manifest" => manifest = field.bytes().await.ok().map(|b| b.to_vec()),
             "readme" => readme = field.bytes().await.ok().map(|b| b.to_vec()),
             "source" => source = field.bytes().await.ok().map(|b| b.to_vec()),
+            "wasm" => {
+                // Drain the field body so the multipart stream advances, but
+                // refuse the request: publishers may not upload binaries.
+                let _ = field.bytes().await;
+                got_wasm_field = true;
+            }
             _ => {}
         }
+    }
+
+    if got_wasm_field {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "wasm_upload_forbidden",
+            "publishers must upload `source` (Rust lib.rs); OMP builds the wasm server-side",
+        );
     }
 
     if namespace.is_empty() || name.is_empty() || version.is_empty() {
@@ -320,9 +383,15 @@ async fn publish_probe(
             "namespace/name/version must be [a-zA-Z0-9._-]+ and at most 64 chars each",
         );
     }
-    let wasm = match wasm {
+    let source = match source {
         Some(b) if !b.is_empty() => b,
-        _ => return error_response(StatusCode::BAD_REQUEST, "missing_wasm", "missing `wasm` field"),
+        _ => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "missing_source",
+                "missing `source` field (Rust lib.rs)",
+            )
+        }
     };
     let manifest = match manifest {
         Some(b) if !b.is_empty() => b,
@@ -335,15 +404,28 @@ async fn publish_probe(
         }
     };
 
-    // Validate the wasm magic header. Doesn't catch every bogus blob but
-    // catches "user uploaded a tarball by mistake".
-    if wasm.len() < 4 || &wasm[..4] != b"\0asm" {
+    // Defense in depth: even though the `wasm` multipart field is refused
+    // outright above, a publisher could try to smuggle a `.wasm` blob in via
+    // the `source` field. The wasm magic header `\0asm\x01\x00\x00\x00` is
+    // valid UTF-8 (all bytes < 0x80), so the UTF-8 check below would not
+    // catch it; reject it explicitly.
+    if source.len() >= 4 && &source[..4] == b"\0asm" {
         return error_response(
             StatusCode::BAD_REQUEST,
-            "bad_wasm",
-            "uploaded file is not a wasm module (missing \\0asm magic)",
+            "wasm_upload_forbidden",
+            "source field looks like a wasm module; upload Rust lib.rs source instead",
         );
     }
+    let source_str = match std::str::from_utf8(&source) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "bad_source",
+                "source must be UTF-8 (single Rust lib.rs file)",
+            )
+        }
+    };
     if std::str::from_utf8(&manifest).is_err() {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -352,13 +434,53 @@ async fn publish_probe(
         );
     }
 
+    // Pre-checked early so we don't waste 30 cargo seconds on a duplicate.
+    let id = entry_id(&publisher_sub, &namespace, &name, &version);
+    {
+        let catalog = state.inner.catalog.lock().await;
+        if let Some(existing) = catalog.get(&id) {
+            if existing.yanked_at.is_none() {
+                return error_response(
+                    StatusCode::CONFLICT,
+                    "version_exists",
+                    "this publisher already published this namespace/name/version",
+                );
+            }
+        }
+    }
+
+    // Server-side build. Every publish (including version bumps) recompiles
+    // from source, so the on-disk wasm always matches the published source.
+    let build = &state.inner.build;
+    let built = match omp_builder::build_inline(
+        &build.scratch_root,
+        &build.probe_common_path,
+        &source_str,
+        build.wall_clock_secs,
+    )
+    .await
+    {
+        Ok(ok) => ok,
+        Err(err) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                axum::Json(serde_json::json!({
+                    "error": {
+                        "code": "build_failed",
+                        "message": err.reason,
+                        "details": { "log": err.log },
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
+    let wasm = built.wasm;
+
     let wasm_hash = sha256_hex(&wasm);
     let manifest_hash = sha256_hex(&manifest);
     let readme_hash = readme.as_ref().map(|b| sha256_hex(b));
-    let source_hash = source
-        .as_ref()
-        .filter(|b| !b.is_empty())
-        .map(|b| sha256_hex(b));
+    let source_hash = Some(sha256_hex(&source));
 
     if let Err(e) = state.inner.blobs.put(&wasm_hash, &wasm) {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, "blob_put", &e.to_string());
@@ -371,13 +493,12 @@ async fn publish_probe(
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, "blob_put", &e.to_string());
         }
     }
-    if let (Some(h), Some(b)) = (source_hash.as_ref(), source.as_ref()) {
-        if let Err(e) = state.inner.blobs.put(h, b) {
+    if let Some(h) = source_hash.as_ref() {
+        if let Err(e) = state.inner.blobs.put(h, &source) {
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, "blob_put", &e.to_string());
         }
     }
 
-    let id = entry_id(&publisher_sub, &namespace, &name, &version);
     let now = now_unix();
     let entry = CatalogEntry {
         id: id.clone(),
@@ -396,20 +517,78 @@ async fn publish_probe(
     };
 
     let mut catalog = state.inner.catalog.lock().await;
-    if let Some(existing) = catalog.get(&id) {
-        if existing.yanked_at.is_none() {
-            return error_response(
-                StatusCode::CONFLICT,
-                "version_exists",
-                "this publisher already published this namespace/name/version",
-            );
-        }
-    }
     if let Err(e) = catalog.upsert(entry.clone()) {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, "catalog_io", &e.to_string());
     }
 
-    (StatusCode::OK, axum::Json(serde_json::json!({ "probe": entry }))).into_response()
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({ "probe": entry, "build_log": built.log })),
+    )
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// PATCH /probes/:id — metadata edit (publisher-only)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ProbePatch {
+    #[serde(default)]
+    pub description: Option<String>,
+    /// New README markdown body. Stored as a fresh blob; old readme blob is
+    /// left in place (content-addressed; might still be referenced by
+    /// historical entries).
+    #[serde(default)]
+    pub readme: Option<String>,
+}
+
+async fn patch_probe(
+    State(state): State<MarketplaceState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    axum::Json(patch): axum::Json<ProbePatch>,
+) -> Response {
+    let (_tenant, sub) = match require_authed_publisher(&state, &headers) {
+        Ok(t) => t,
+        Err(resp) => return resp,
+    };
+    let mut catalog = state.inner.catalog.lock().await;
+    let entry = match catalog.get(&id) {
+        Some(e) => e.clone(),
+        None => return error_response(StatusCode::NOT_FOUND, "not_found", "no such probe id"),
+    };
+    if entry.publisher_sub != sub {
+        return error_response(
+            StatusCode::FORBIDDEN,
+            "not_publisher",
+            "only the original publisher can edit this probe",
+        );
+    }
+    let mut updated = entry;
+    if let Some(d) = patch.description {
+        updated.description = if d.is_empty() { None } else { Some(d) };
+    }
+    if let Some(r) = patch.readme {
+        if r.is_empty() {
+            updated.readme_hash = None;
+        } else {
+            let bytes = r.into_bytes();
+            let h = sha256_hex(&bytes);
+            if let Err(e) = state.inner.blobs.put(&h, &bytes) {
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "blob_put",
+                    &e.to_string(),
+                );
+            }
+            updated.readme_hash = Some(h);
+        }
+    }
+    if let Err(e) = catalog.upsert(updated.clone()) {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "catalog_io", &e.to_string());
+    }
+    (StatusCode::OK, axum::Json(serde_json::json!({ "probe": updated }))).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -453,7 +632,7 @@ async fn yank_probe(
 // helpers
 // ---------------------------------------------------------------------------
 
-fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
+pub(crate) fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
     (
         status,
         axum::Json(serde_json::json!({
@@ -463,7 +642,7 @@ fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
         .into_response()
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let h = Sha256::digest(bytes);
     let mut s = String::with_capacity(64);
@@ -491,14 +670,14 @@ fn entry_id(publisher_sub: &str, namespace: &str, name: &str, version: &str) -> 
     s
 }
 
-fn is_safe_ident(s: &str) -> bool {
+pub(crate) fn is_safe_ident(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-fn now_unix() -> u64 {
+pub(crate) fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

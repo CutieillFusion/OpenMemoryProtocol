@@ -92,7 +92,7 @@ fn schema_update_repopulates_existing_files() {
     let repo = Repo::init(td.path()).unwrap();
 
     // Commit 1: just the v1 schema. Pre-condition for ingest.
-    stage_blob(&repo, "schemas/text.schema", TEXT_SCHEMA_V1.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", TEXT_SCHEMA_V1.as_bytes());
     repo.commit("v1 schema", Some(fixed_author())).unwrap();
 
     // Commit 2: ingest two text files under v1.
@@ -116,7 +116,7 @@ fn schema_update_repopulates_existing_files() {
     let probe_name = register_user_probe(&repo, "custom", "size_v2");
     repo.commit("add user probe", Some(fixed_author())).unwrap();
     let v2 = text_schema_v2(&probe_name);
-    stage_blob(&repo, "schemas/text.schema", v2.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", v2.as_bytes());
     let (_hash, summaries) = repo
         .commit_with_summary("update text schema", Some(fixed_author()))
         .unwrap();
@@ -148,7 +148,7 @@ fn time_travel_returns_old_manifest_unchanged() {
     let td = TempDir::new().unwrap();
     let repo = Repo::init(td.path()).unwrap();
 
-    stage_blob(&repo, "schemas/text.schema", TEXT_SCHEMA_V1.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", TEXT_SCHEMA_V1.as_bytes());
     repo.commit("v1 schema", Some(fixed_author())).unwrap();
 
     repo.add("a.txt", b"hello", Some(Fields::new()), None)
@@ -164,7 +164,7 @@ fn time_travel_returns_old_manifest_unchanged() {
     repo.commit("add user probe", Some(fixed_author())).unwrap();
     stage_blob(
         &repo,
-        "schemas/text.schema",
+        "schemas/text/schema.toml",
         text_schema_v2(&probe_name).as_bytes(),
     );
     repo.commit("schema v2", Some(fixed_author())).unwrap();
@@ -215,7 +215,7 @@ probe = "{probe_name}"
 type = "int"
 "#
     );
-    stage_blob(&repo, "schemas/text.schema", schema_v1.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", schema_v1.as_bytes());
     repo.commit("v1 schema with two fields", Some(fixed_author()))
         .unwrap();
 
@@ -228,7 +228,7 @@ type = "int"
     assert!(pre.fields.contains_key("byte_size_dup"));
 
     // Drop the field by replacing the schema with v1-style (no _dup).
-    stage_blob(&repo, "schemas/text.schema", TEXT_SCHEMA_V1.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", TEXT_SCHEMA_V1.as_bytes());
     repo.commit("v2 schema drops byte_size_dup", Some(fixed_author()))
         .unwrap();
     let post = match repo.show("a.txt", None).unwrap() {
@@ -263,7 +263,7 @@ type = "int"
 source = "user_provided"
 type = "string"
 "#;
-    stage_blob(&repo, "schemas/text.schema", schema_v1.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", schema_v1.as_bytes());
     repo.commit("v1", Some(fixed_author())).unwrap();
 
     let mut user_fields: Fields = BTreeMap::new();
@@ -294,7 +294,7 @@ source = "user_provided"
 type = "string"
 "#
     );
-    stage_blob(&repo, "schemas/text.schema", schema_v2.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", schema_v2.as_bytes());
     repo.commit("v2", Some(fixed_author())).unwrap();
 
     let m = match repo.show("a.txt", None).unwrap() {
@@ -319,7 +319,7 @@ fn reprobe_only_walks_committed_manifests() {
     let td = TempDir::new().unwrap();
     let repo = Repo::init(td.path()).unwrap();
 
-    stage_blob(&repo, "schemas/text.schema", TEXT_SCHEMA_V1.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", TEXT_SCHEMA_V1.as_bytes());
     repo.commit("v1", Some(fixed_author())).unwrap();
 
     repo.add("a.txt", b"old", Some(Fields::new()), None)
@@ -332,7 +332,7 @@ fn reprobe_only_walks_committed_manifests() {
     repo.commit("user probe", Some(fixed_author())).unwrap();
     stage_blob(
         &repo,
-        "schemas/text.schema",
+        "schemas/text/schema.toml",
         text_schema_v2(&probe_name).as_bytes(),
     );
     repo.add("b.txt", b"new", Some(Fields::new()), None)
@@ -378,7 +378,7 @@ fn cosmetic_schema_change_is_a_no_op() {
     let td = TempDir::new().unwrap();
     let repo = Repo::init(td.path()).unwrap();
 
-    stage_blob(&repo, "schemas/text.schema", TEXT_SCHEMA_V1.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", TEXT_SCHEMA_V1.as_bytes());
     repo.commit("v1", Some(fixed_author())).unwrap();
 
     repo.add("a.txt", b"hi", Some(Fields::new()), None).unwrap();
@@ -387,7 +387,7 @@ fn cosmetic_schema_change_is_a_no_op() {
     // Re-stage byte-identical schema. Different blob hash on disk? No —
     // same bytes deflate to the same blob hash. Even with the staging,
     // the reprobe hook compares parsed-Schema equality, so no rebuild.
-    stage_blob(&repo, "schemas/text.schema", TEXT_SCHEMA_V1.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", TEXT_SCHEMA_V1.as_bytes());
     // The commit may legally fail with "no staged changes" if staging
     // was a no-op; tolerate either path.
     let res = repo.commit_with_summary("re-stage same v1", Some(fixed_author()));

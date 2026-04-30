@@ -1,62 +1,59 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
+  import { page } from '$app/stores';
   import { ApiError, publishMarketplaceProbe } from '$lib/api';
+  import CodeEditor from '$lib/components/CodeEditor.svelte';
 
-  let namespace = '';
-  let name = '';
+  let namespace = $page.url.searchParams.get('namespace') ?? '';
+  let name = $page.url.searchParams.get('name') ?? '';
   let version = '0.1.0';
   let description = '';
   let readmeText = '';
   let sourceText = '';
-
-  let wasmFile: File | null = null;
-  let manifestFile: File | null = null;
+  let manifestText = '';
 
   let publishing = false;
   let error: string | null = null;
-
-  function pickWasm(e: Event) {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    wasmFile = f ?? null;
-  }
-  function pickManifest(e: Event) {
-    const f = (e.target as HTMLInputElement).files?.[0];
-    manifestFile = f ?? null;
-  }
+  let buildLog: string | null = null;
 
   $: canSubmit =
     !publishing &&
     namespace.trim() !== '' &&
     name.trim() !== '' &&
     version.trim() !== '' &&
-    !!wasmFile &&
-    !!manifestFile;
+    sourceText.trim() !== '' &&
+    manifestText.trim() !== '';
 
   async function submit() {
-    if (!canSubmit || !wasmFile || !manifestFile) return;
+    if (!canSubmit) return;
     publishing = true;
     error = null;
+    buildLog = null;
     try {
-      const wasm = new Blob([await wasmFile.arrayBuffer()], { type: 'application/wasm' });
-      const manifest = new Blob([await manifestFile.arrayBuffer()], { type: 'text/plain' });
+      const source = new Blob([sourceText], { type: 'text/plain' });
+      const manifest = new Blob([manifestText], { type: 'text/plain' });
       const readme = readmeText.trim()
         ? new Blob([readmeText], { type: 'text/markdown' })
         : undefined;
-      const source = sourceText.trim() ? new Blob([sourceText], { type: 'text/plain' }) : undefined;
       const resp = await publishMarketplaceProbe({
         namespace: namespace.trim(),
         name: name.trim(),
         version: version.trim(),
         description: description.trim() || undefined,
-        wasm,
+        source,
         manifest,
-        readme,
-        source
+        readme
       });
       goto(`${base}/marketplace/${resp.probe.id}`);
     } catch (e) {
-      error = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
+      if (e instanceof ApiError) {
+        error = `${e.code}: ${e.message}`;
+        const log = e.details?.log;
+        if (typeof log === 'string') buildLog = log;
+      } else {
+        error = String(e);
+      }
     } finally {
       publishing = false;
     }
@@ -65,14 +62,12 @@
 
 <section class="page">
   <a class="back" href="{base}/marketplace">← back to marketplace</a>
-  <h1>Upload existing probe</h1>
+  <h1>Publish a probe</h1>
   <p class="muted">
-    For probes you built outside the <a class="link" href="{base}/probes/build">Build probe</a>
-    page (e.g., compiled locally with <code class="mono">cargo build --target
-    wasm32-unknown-unknown --release</code>). Uploads bypass the server-side
-    builder; you provide a pre-compiled <code>.wasm</code> and its
-    <code>.probe.toml</code>. Optional README and Rust source are saved
-    alongside so installers can review them before clicking <em>install</em>.
+    Paste your probe's <code class="mono">lib.rs</code> below. OMP compiles it
+    server-side on every publish (and every version bump), so the on-disk
+    <code class="mono">probe.wasm</code> always matches the published source.
+    Pre-compiled WASM uploads are not accepted.
   </p>
 
   <div class="grid">
@@ -95,25 +90,26 @@
     <input id="desc" class="input" bind:value={description} placeholder="One-line summary" />
   </div>
 
-  <div class="grid">
-    <div class="field">
-      <label class="label" for="wasm"
-        >probe.wasm<span class="req"> *</span></label
-      >
-      <input id="wasm" class="input" type="file" accept=".wasm,application/wasm" on:change={pickWasm} />
-      {#if wasmFile}
-        <span class="hint mono">{wasmFile.name} · {wasmFile.size} bytes</span>
-      {/if}
-    </div>
-    <div class="field">
-      <label class="label" for="man"
-        >probe.toml<span class="req"> *</span></label
-      >
-      <input id="man" class="input" type="file" accept=".toml,text/*" on:change={pickManifest} />
-      {#if manifestFile}
-        <span class="hint mono">{manifestFile.name} · {manifestFile.size} bytes</span>
-      {/if}
-    </div>
+  <div class="field">
+    <span class="label">lib.rs<span class="req"> *</span></span>
+    <CodeEditor
+      language="rust"
+      bind:value={sourceText}
+      disabled={publishing}
+      minHeight="320px"
+      placeholder="//! Your probe's Rust source."
+    />
+  </div>
+
+  <div class="field">
+    <span class="label">probe.toml<span class="req"> *</span></span>
+    <CodeEditor
+      language="toml"
+      bind:value={manifestText}
+      disabled={publishing}
+      minHeight="220px"
+      placeholder={`name = "text.word_count"\nreturns = "int"\naccepts_kwargs = []\ndescription = "Counts whitespace-separated tokens."\n\n[limits]\nmemory_mb = 32\nfuel = 100000000\nwall_clock_s = 5`}
+    />
   </div>
 
   <div class="field">
@@ -127,29 +123,24 @@
     ></textarea>
   </div>
 
-  <div class="field">
-    <label class="label" for="src">source / lib.rs (optional, paste the Rust source)</label>
-    <textarea
-      id="src"
-      class="input mono"
-      rows="10"
-      bind:value={sourceText}
-      placeholder="//! Source the probe was compiled from..."
-    ></textarea>
-  </div>
-
   {#if error}
     <div class="error-banner">{error}</div>
+  {/if}
+  {#if buildLog}
+    <details class="build-log" open>
+      <summary>build log</summary>
+      <pre class="mono">{buildLog}</pre>
+    </details>
   {/if}
 
   <div class="flex flex--between" style="margin-top: 16px;">
     <span class="muted text-sm">
-      Per doc 23, the binding key is
+      The binding key is
       <code class="mono">(publisher_sub, namespace, name, version)</code>.
-      Republishing the same version returns 409.
+      Republishing the same version returns 409 — bump the version to push an update.
     </span>
     <button class="btn btn--primary" on:click={submit} disabled={!canSubmit}>
-      {publishing ? 'publishing…' : 'publish'}
+      {publishing ? 'building & publishing…' : 'publish'}
     </button>
   </div>
 </section>
@@ -178,10 +169,16 @@
   .req {
     color: var(--danger, #c33);
   }
-  .hint {
-    display: inline-block;
-    margin-top: 4px;
+  .build-log {
+    margin-top: 12px;
+    border: 1px solid var(--border, #ddd);
+    padding: 8px;
+    border-radius: 4px;
+  }
+  .build-log pre {
+    max-height: 320px;
+    overflow: auto;
     font-size: 0.75rem;
-    color: var(--fg-soft);
+    white-space: pre-wrap;
   }
 </style>

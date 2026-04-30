@@ -6,7 +6,9 @@
     ApiError,
     fetchMarketplaceBlob,
     getMarketplaceProbe,
+    getMe,
     installMarketplaceProbe,
+    yankMarketplaceProbe,
     type MarketplaceProbe
   } from '$lib/api';
 
@@ -19,10 +21,23 @@
   let installing = false;
   let installed = false;
   let installError: string | null = null;
+  let mySub: string | null = null;
+  let yanking = false;
+  let yankError: string | null = null;
 
   $: id = $page.params.id ?? '';
 
-  onMount(load);
+  onMount(() => {
+    load();
+    // Owner actions are conditional on viewer == publisher. getMe() may 401
+    // for anonymous viewers; that's fine, we just leave mySub null and hide
+    // the controls.
+    getMe()
+      .then((me) => (mySub = me.sub))
+      .catch(() => {});
+  });
+
+  $: isOwner = !!probe && !!mySub && probe.publisher_sub === mySub;
 
   async function load() {
     if (!id) {
@@ -71,6 +86,23 @@
       installing = false;
     }
   }
+
+  async function yank() {
+    if (!probe) return;
+    if (!confirm(`Yank ${probe.namespace}.${probe.name}@${probe.version}? Existing installs keep working; new installs are blocked.`)) {
+      return;
+    }
+    yanking = true;
+    yankError = null;
+    try {
+      await yankMarketplaceProbe(probe.id);
+      await load();
+    } catch (e) {
+      yankError = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
+    } finally {
+      yanking = false;
+    }
+  }
 </script>
 
 <section class="page">
@@ -103,13 +135,33 @@
           <div class="notice notice--ok">
             Staged. Visit <a class="link" href="{base}/commit">/commit</a> to make it durable.
           </div>
-        {:else}
+        {:else if !probe.yanked_at}
           <button class="btn btn--primary" disabled={installing} on:click={install}>
             {installing ? 'installing…' : 'install'}
           </button>
           {#if installError}
             <div class="error-banner small">{installError}</div>
           {/if}
+        {/if}
+        {#if isOwner}
+          <div class="owner-actions">
+            <a
+              class="btn btn--ghost btn--sm"
+              href="{base}/marketplace/{probe.id}/edit"
+            >edit metadata</a>
+            <a
+              class="btn btn--ghost btn--sm"
+              href="{base}/marketplace/upload?namespace={encodeURIComponent(probe.namespace)}&name={encodeURIComponent(probe.name)}"
+            >push new version</a>
+            {#if !probe.yanked_at}
+              <button class="btn btn--ghost btn--sm danger" disabled={yanking} on:click={yank}>
+                {yanking ? 'yanking…' : 'yank'}
+              </button>
+            {/if}
+            {#if yankError}
+              <div class="error-banner small">{yankError}</div>
+            {/if}
+          </div>
         {/if}
       </div>
     </header>
@@ -228,5 +280,17 @@
   .error-banner.small {
     padding: 6px 10px;
     font-size: 0.8rem;
+  }
+  .owner-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-end;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  .owner-actions .danger {
+    color: var(--danger, #c33);
   }
 </style>

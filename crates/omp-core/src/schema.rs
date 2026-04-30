@@ -240,6 +240,14 @@ pub struct SchemaFieldSummary {
     pub required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// One of `constant` / `probe` / `user_provided` / `field`. Lets the UI
+    /// render schemas as collections of probe-references + user metadata
+    /// per `docs/design/25-schema-marketplace.md`.
+    pub source: String,
+    /// For `source = "probe"`, the qualified probe name (`<ns>.<name>`).
+    /// `None` for the other three sources.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe: Option<String>,
 }
 
 impl Schema {
@@ -300,11 +308,23 @@ impl Schema {
             fields: self
                 .fields
                 .iter()
-                .map(|f| SchemaFieldSummary {
-                    name: f.name.clone(),
-                    r#type: f.type_.as_str().to_string(),
-                    required: f.required,
-                    description: f.description.clone(),
+                .map(|f| {
+                    let (source, probe) = match &f.source {
+                        Source::Constant { .. } => ("constant".to_string(), None),
+                        Source::Probe { probe, .. } => {
+                            ("probe".to_string(), Some(probe.clone()))
+                        }
+                        Source::UserProvided => ("user_provided".to_string(), None),
+                        Source::Field { .. } => ("field".to_string(), None),
+                    };
+                    SchemaFieldSummary {
+                        name: f.name.clone(),
+                        r#type: f.type_.as_str().to_string(),
+                        required: f.required,
+                        description: f.description.clone(),
+                        source,
+                        probe,
+                    }
                 })
                 .collect(),
         }

@@ -246,7 +246,7 @@ mod tests {
         std::fs::create_dir_all(root.join(".omp")).unwrap();
         touch(&root.join(".omp/HEAD"), "x");
         touch(&root.join("omp.toml"), "");
-        touch(&root.join("schemas/text.schema"), "x");
+        touch(&root.join("schemas/text/schema.toml"), "x");
         touch(&root.join("probes/file/size.wasm"), "x");
         touch(&root.join("docs/readme.md"), "x");
 
@@ -258,13 +258,13 @@ mod tests {
                 "docs/readme.md",
                 "omp.toml",
                 "probes/file/size.wasm",
-                "schemas/text.schema",
+                "schemas/text/schema.toml",
             ]
         );
         // Classification.
         let get = |p: &str| entries.iter().find(|e| e.repo_path == p).unwrap().mode;
         assert_eq!(get("omp.toml"), Mode::Blob);
-        assert_eq!(get("schemas/text.schema"), Mode::Blob);
+        assert_eq!(get("schemas/text/schema.toml"), Mode::Blob);
         assert_eq!(get("probes/file/size.wasm"), Mode::Blob);
         assert_eq!(get("docs/readme.md"), Mode::Manifest);
     }

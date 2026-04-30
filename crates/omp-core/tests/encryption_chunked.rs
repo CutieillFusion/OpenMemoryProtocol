@@ -349,7 +349,7 @@ source = "probe"
 probe = "file.sha256"
 type = "string"
 "#;
-    repo.add("schemas/bin.schema", bin_schema, None, None)
+    repo.add("schemas/bin/schema.toml", bin_schema, None, None)
         .unwrap();
     repo.commit("init", Some(fixed_author())).unwrap();
 

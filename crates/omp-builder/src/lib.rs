@@ -23,6 +23,7 @@ pub mod router;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+pub use builder::{build_inline, InlineBuildErr, InlineBuildOk};
 pub use jobs::{Job, JobId, JobState, JobsTable};
 
 /// Runtime configuration for the builder service. Values default to

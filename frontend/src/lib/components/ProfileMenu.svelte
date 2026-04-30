@@ -106,6 +106,9 @@
       {/if}
 
       <div class="dropdown-actions">
+        <a class="dropdown-link" href="/ui/settings/api-keys" on:click={close}>
+          API keys
+        </a>
         <form method="POST" action="/auth/logout" style="margin: 0;">
           <button class="btn btn--danger btn--block" type="submit" on:click={close}>
             Sign out
@@ -211,6 +214,19 @@
   }
   .dropdown-actions {
     padding: 10px 14px;
+  }
+  .dropdown-link {
+    display: block;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    border-radius: 6px;
+    color: var(--fg);
+    text-decoration: none;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+  }
+  .dropdown-link:hover {
+    background: rgba(17, 17, 17, 0.04);
   }
   .dropdown-error {
     padding: 14px;

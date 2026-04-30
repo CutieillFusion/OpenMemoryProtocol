@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Parser;
 use ed25519_dalek::VerifyingKey;
-use omp_marketplace::{router, MarketplaceState};
+use omp_marketplace::{router, BuildSettings, MarketplaceState};
 
 #[derive(Parser)]
 #[command(name = "omp-marketplace", about = "OMP probe marketplace service")]
@@ -27,6 +27,21 @@ struct Args {
     /// warning. Production must set this.
     #[arg(long)]
     verifying_key: Option<PathBuf>,
+
+    /// Path to the `probe-common` crate the build skeleton uses as a path
+    /// dependency. Same default as `omp-builder`.
+    #[arg(long, default_value = "../../probes-src/probe-common")]
+    probe_common: PathBuf,
+
+    /// Scratch directory for in-process publish builds. Recreated under here
+    /// per publish, removed on completion.
+    #[arg(long, default_value = "/tmp/omp-marketplace-build")]
+    build_scratch: PathBuf,
+
+    /// Wall-clock cap on each publish build (seconds). Builds that exceed
+    /// this are killed and the publish returns 422.
+    #[arg(long, default_value_t = 90)]
+    build_wall_clock_secs: u64,
 }
 
 #[tokio::main]
@@ -57,7 +72,12 @@ async fn main() -> Result<()> {
         None
     };
 
-    let state = MarketplaceState::open(args.data_root, verifier)?;
+    let build = BuildSettings {
+        probe_common_path: args.probe_common,
+        scratch_root: args.build_scratch,
+        wall_clock_secs: args.build_wall_clock_secs,
+    };
+    let state = MarketplaceState::open(args.data_root, verifier, build)?;
     let app = router(state);
 
     tracing::info!(bind = %args.bind, "omp-marketplace listening");

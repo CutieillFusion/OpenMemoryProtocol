@@ -108,8 +108,11 @@ Authenticated (gateway forwards a signed `TenantContext` carrying `sub`):
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/marketplace/probes` | Publish a probe folder. Body is a multipart form: `namespace`, `name`, `version`, `description`, `wasm` (file), `manifest` (file), `readme` (file, optional). Server stores blobs by sha256, writes a catalog row, returns the catalog `id`. |
+| `POST` | `/marketplace/probes` | Publish a probe (publisher only). Body is a multipart form: `namespace`, `name`, `version`, `description`, `source` (Rust `lib.rs` body), `manifest` (`probe.toml`), `readme` (optional). **No `wasm` field** — the marketplace builds the wasm server-side via the same controlled cargo skeleton as `omp-builder` (doc 20). On a build failure the request returns `422 build_failed` with the cargo log under `error.details.log`. On success the marketplace stores both the source and the produced wasm as content-addressed blobs and writes a catalog row. |
+| `PATCH` | `/marketplace/probes/<id>` | Edit metadata (publisher only). JSON body with optional `description` and `readme`. Does not bump the version, does not rebuild, does not change `wasm_hash` or `source_hash`. |
 | `DELETE` | `/marketplace/probes/<id>` | Yank a probe (publisher only). Catalog row is marked unpublished; **blobs are preserved forever** so historical replay against past `probe_hashes` keeps working (per `02-object-model.md` §74-82). |
+
+**Why source-only.** Accepting a pre-built wasm makes "the publisher pinky-promises this binary matches the displayed `lib.rs`" load-bearing. Building from source on every publish removes that gap: the wasm a user installs is, by construction, the output of the displayed source through the documented skeleton. Pushing a new version (re-POST with a bumped `version`) reuses the same code path, so v0.2.0 and v0.1.0 are built the same way from whatever source each declared. The 60–90 s build cost on the publish path is acceptable for a deliberate human action; the gateway and frontend treat publish as a long-running request rather than a 202+poll job. The `omp-builder` crate's `build_inline` lib function (extracted from `run_build`) is the single shared implementation.
 
 Install is a *gateway* endpoint (not a marketplace one):
 
@@ -129,7 +132,8 @@ CREATE TABLE probes (
     name            TEXT NOT NULL,
     version         TEXT NOT NULL,            -- free-text; semver enforcement deferred
     description     TEXT,
-    wasm_hash       TEXT NOT NULL,            -- framed sha256 (per 02-object-model)
+    wasm_hash       TEXT NOT NULL,            -- framed sha256 of server-built wasm
+    source_hash     TEXT NOT NULL,            -- framed sha256 of the lib.rs that produced wasm_hash
     manifest_hash   TEXT NOT NULL,
     readme_hash     TEXT,
     published_at    INTEGER NOT NULL,         -- unix seconds
@@ -208,7 +212,7 @@ gateway:
 
 - The `omp-marketplace` crate, its endpoints, its catalog table, its blob storage wiring.
 - Frontend `/ui/marketplace` page and "Publish to marketplace" affordance on the Build page.
-- Schema marketplace. Schemas have no companions today; the question of whether they need a folder-ified layout and a marketplace is reopened only if real usage forces it.
+- Schema marketplace — addressed in [`25-schema-marketplace.md`](./25-schema-marketplace.md), which adopts the same per-folder layout and extends this service with a `schemas.rs` module rather than spawning a second microservice.
 - Semver-aware publishing, signing, full-text search, rate limiting, content moderation.
 - The `sub` field in `TenantContext`. Lands when `omp-marketplace` lands; until then no caller needs it.
 

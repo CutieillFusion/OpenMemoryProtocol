@@ -1,7 +1,7 @@
 import { writable, get, type Writable } from 'svelte/store';
 
 /**
- * Auth modes the UI gates on. See `docs/design/22-workos-auth.md`.
+ * Auth modes the UI gates on.
  *
  *   - `unknown`        — pre-probe.
  *   - `no-auth`        — single-tenant dev; no gate, no Authorization header.

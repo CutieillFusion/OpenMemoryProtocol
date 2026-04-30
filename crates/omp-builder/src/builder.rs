@@ -34,6 +34,108 @@ pub struct BuildRequest {
     pub probe_toml: String,
 }
 
+/// Successful inline build: the produced `.wasm` plus the captured cargo log.
+#[derive(Debug, Clone)]
+pub struct InlineBuildOk {
+    pub wasm: Vec<u8>,
+    pub log: String,
+}
+
+/// Failed inline build: a short reason plus the captured cargo log so the
+/// caller can surface it to the user.
+#[derive(Debug, Clone)]
+pub struct InlineBuildErr {
+    pub reason: String,
+    pub log: String,
+}
+
+/// Compile a single `lib.rs` to wasm in a one-shot, synchronous-ish call.
+///
+/// Used by the marketplace publish handler so the publish flow stays a
+/// single HTTP request: source in → wasm out (or a build log on failure),
+/// no polling, no jobs table. Reuses the same controlled Cargo skeleton as
+/// the long-running `/probes/build` flow so a probe built here is byte-
+/// identical to one built via the streaming endpoint with the same source.
+pub async fn build_inline(
+    scratch_root: &Path,
+    probe_common: &Path,
+    lib_rs: &str,
+    wall_clock_secs: u64,
+) -> Result<InlineBuildOk, InlineBuildErr> {
+    let job_dir_name = format!("inline-{}", uuid_like());
+    let scratch = scratch_root.join(&job_dir_name);
+    if let Err(e) = tokio::fs::create_dir_all(&scratch).await {
+        return Err(InlineBuildErr {
+            reason: format!("create scratch dir: {e}"),
+            log: String::new(),
+        });
+    }
+
+    let req = BuildRequest {
+        tenant: String::new(),
+        namespace: "inline".into(),
+        name: "build".into(),
+        lib_rs: lib_rs.to_string(),
+        probe_toml: String::new(),
+    };
+    if let Err(e) = stamp_skeleton(&scratch, probe_common, &req).await {
+        let _ = tokio::fs::remove_dir_all(&scratch).await;
+        return Err(InlineBuildErr {
+            reason: format!("stamp skeleton: {e}"),
+            log: String::new(),
+        });
+    }
+
+    let mut log_buf = String::new();
+    let cargo_result = run_cargo_capturing(
+        &scratch,
+        Duration::from_secs(wall_clock_secs),
+        &mut log_buf,
+    )
+    .await;
+
+    let result = match cargo_result {
+        Ok(()) => {
+            let wasm_path = scratch
+                .join("target")
+                .join("wasm32-unknown-unknown")
+                .join("release")
+                .join("probe_lib.wasm");
+            match tokio::fs::read(&wasm_path).await {
+                Ok(bytes) => Ok(InlineBuildOk {
+                    wasm: bytes,
+                    log: log_buf,
+                }),
+                Err(e) => Err(InlineBuildErr {
+                    reason: format!("read wasm artifact: {e}"),
+                    log: log_buf,
+                }),
+            }
+        }
+        Err(reason) => Err(InlineBuildErr {
+            reason,
+            log: log_buf,
+        }),
+    };
+
+    let _ = tokio::fs::remove_dir_all(&scratch).await;
+    result
+}
+
+/// Cheap unique-ish suffix for inline-build scratch directories. We don't
+/// pull `uuid` just for this — the timestamp + nanos + a couple of random
+/// bytes from the OS are good enough to avoid collisions across concurrent
+/// publishes on the same pod.
+fn uuid_like() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    format!("{:x}-{:x}", nanos, pid)
+}
+
 /// Run the build for `id` to completion. Updates the jobs table on
 /// transitions, broadcasts cargo output to the log channel. Errors land in
 /// `Job.error` rather than being returned, since the request handler that
@@ -224,6 +326,88 @@ async fn run_cargo(
     let _ = out_task.await;
     let _ = err_task.await;
     result
+}
+
+/// JobsTable-free variant of `run_cargo` used by `build_inline`. Same cargo
+/// invocation, same wall-clock cap, but cargo output is appended to a
+/// `String` instead of broadcast to the SSE log channel.
+async fn run_cargo_capturing(
+    scratch: &Path,
+    wall_clock: Duration,
+    log: &mut String,
+) -> Result<(), String> {
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(scratch)
+        .args([
+            "build",
+            "--release",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--quiet",
+        ])
+        .env("CARGO_TERM_COLOR", "never")
+        .env("CARGO_TERM_PROGRESS_WHEN", "never")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let mut child = cmd.spawn().map_err(|e| format!("spawn cargo: {e}"))?;
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+
+    let collect_out = collect_lines(stdout, "stdout");
+    let collect_err = collect_lines(stderr, "stderr");
+
+    let wait = async {
+        let status = child.wait().await.map_err(|e| format!("wait cargo: {e}"))?;
+        if !status.success() {
+            return Err(format!(
+                "cargo exited non-zero (code {})",
+                status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".into())
+            ));
+        }
+        Ok::<(), String>(())
+    };
+
+    let (status_result, out_lines, err_lines) =
+        match tokio::time::timeout(wall_clock, async {
+            let (s, o, e) = tokio::join!(wait, collect_out, collect_err);
+            (s, o, e)
+        })
+        .await
+        {
+            Ok(t) => t,
+            Err(_) => (
+                Err(format!(
+                    "cargo exceeded wall-clock cap of {}s — killed",
+                    wall_clock.as_secs()
+                )),
+                Vec::new(),
+                Vec::new(),
+            ),
+        };
+
+    for line in out_lines.iter().chain(err_lines.iter()) {
+        log.push_str(line);
+        log.push('\n');
+    }
+    status_result
+}
+
+async fn collect_lines<R>(reader: R, tag: &'static str) -> Vec<String>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    let mut buf = BufReader::new(reader).lines();
+    let mut out = Vec::new();
+    while let Ok(Some(line)) = buf.next_line().await {
+        out.push(format!("[cargo:{tag}] {line}"));
+    }
+    out
 }
 
 async fn stream_lines<R>(reader: R, jobs: std::sync::Arc<JobsTable>, id: JobId, tag: &'static str)

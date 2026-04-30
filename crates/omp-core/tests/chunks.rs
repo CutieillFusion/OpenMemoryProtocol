@@ -125,7 +125,7 @@ source = "probe"
 probe = "file.sha256"
 type = "string"
 "#;
-    repo.add("schemas/bin.schema", schema, None, None).unwrap();
+    repo.add("schemas/bin/schema.toml", schema, None, None).unwrap();
     repo.commit("add bin schema", Some(fixed_author())).unwrap();
 
     // 150 bytes ⇒ 3 chunks; content_length = 150 > all probe caps on the

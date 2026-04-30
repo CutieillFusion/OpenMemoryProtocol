@@ -54,6 +54,12 @@ pub struct WorkOsConfig {
     pub session_ttl_seconds: u64,
     #[serde(default = "default_refresh_grace")]
     pub refresh_grace_seconds: u64,
+    /// How long a successful WorkOS API-key validation stays cached on the
+    /// gateway. Bounds revocation latency: a key revoked in the WorkOS UI
+    /// keeps working for up to this many seconds. See
+    /// `docs/design/24-per-user-api-keys.md` §"Risks".
+    #[serde(default = "default_validation_cache_ttl")]
+    pub validation_cache_ttl_seconds: u64,
 }
 
 fn default_session_ttl() -> u64 {
@@ -61,6 +67,9 @@ fn default_session_ttl() -> u64 {
 }
 fn default_refresh_grace() -> u64 {
     DEFAULT_REFRESH_GRACE_SECS
+}
+fn default_validation_cache_ttl() -> u64 {
+    60
 }
 
 /// OIDC provider metadata + issuer-specific endpoints we resolve once at
@@ -371,6 +380,103 @@ fn now_unix() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
+// API-key validation cache. Keyed by sha256(token); the token itself never
+// enters the map. Lazy expiry, capped size (10k entries) — small enough to
+// fit in memory for any realistic tenant population. See
+// `docs/design/24-per-user-api-keys.md` §"resolve_bearer_token extension".
+// ---------------------------------------------------------------------------
+
+const VALIDATION_CACHE_MAX_ENTRIES: usize = 10_000;
+
+#[derive(Clone)]
+struct CachedValidation {
+    tenant: String,
+    expires_at: u64,
+}
+
+#[derive(Clone, Default)]
+pub struct ValidationCache {
+    inner: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<[u8; 32], CachedValidation>>>,
+}
+
+impl ValidationCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, key: &[u8; 32]) -> Option<String> {
+        let now = now_unix();
+        let mut map = self.inner.lock().ok()?;
+        match map.get(key) {
+            Some(entry) if entry.expires_at > now => Some(entry.tenant.clone()),
+            Some(_) => {
+                map.remove(key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    pub fn insert(&self, key: [u8; 32], tenant: String, ttl_secs: u64) {
+        if let Ok(mut map) = self.inner.lock() {
+            if map.len() >= VALIDATION_CACHE_MAX_ENTRIES {
+                let now = now_unix();
+                map.retain(|_, v| v.expires_at > now);
+                if map.len() >= VALIDATION_CACHE_MAX_ENTRIES {
+                    map.clear();
+                }
+            }
+            map.insert(
+                key,
+                CachedValidation {
+                    tenant,
+                    expires_at: now_unix() + ttl_secs,
+                },
+            );
+        }
+    }
+}
+
+pub fn token_hash_bytes(token: &str) -> [u8; 32] {
+    Sha256::digest(token.as_bytes()).into()
+}
+
+/// `POST {issuer}/user_management/api_keys/validate` — validates a bearer
+/// token presented by an external client and returns the owning
+/// `organization_id` if recognized. Authenticated to WorkOS with the
+/// management `client_secret`. Errors and "no such key" both collapse to
+/// `None` so the resolver can fall through to `401 unauthorized`.
+pub async fn validate_api_key(oidc: &OidcRuntime, token: &str) -> Option<String> {
+    let url = format!(
+        "{}/user_management/api_keys/validate",
+        oidc.config.issuer_url.trim_end_matches('/')
+    );
+    let resp = oidc
+        .http
+        .post(&url)
+        .bearer_auth(&oidc.config.client_secret)
+        .json(&serde_json::json!({ "api_key": token }))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    #[derive(Deserialize)]
+    struct ValidateResponse {
+        #[serde(default)]
+        api_key: Option<ValidatedKey>,
+    }
+    #[derive(Deserialize)]
+    struct ValidatedKey {
+        #[serde(default)]
+        organization_id: Option<String>,
+    }
+    let parsed: ValidateResponse = resp.json().await.ok()?;
+    parsed.api_key?.organization_id.filter(|s| !s.is_empty())
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +1003,77 @@ pub async fn me(State(state): State<GatewayState>, headers: HeaderMap) -> Respon
         .into_response()
 }
 
+/// `GET /auth/widget-token` — mints a short-lived WorkOS widget session
+/// token bound to the current user + organization, scoped to API-key
+/// management. The frontend feeds it to the WorkOS API Keys widget; the
+/// widget then talks directly to WorkOS for create/list/revoke. The
+/// gateway is not on the mint path — it never sees key material at mint
+/// time, only at validation time.
+///
+/// See `docs/design/24-per-user-api-keys.md` §"New route".
+pub async fn widget_token(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
+    let oidc = match state.oidc.as_ref() {
+        Some(o) => o.clone(),
+        None => return error_resp(StatusCode::NOT_FOUND, "workos_disabled"),
+    };
+    if !matches!(oidc.provider, AuthProvider::Workos) {
+        return error_resp(StatusCode::NOT_FOUND, "widget_unavailable");
+    }
+    let session = match resolve_session_cookie(&headers, &state.signer.verifying_key()) {
+        Some(s) => s,
+        None => return error_resp(StatusCode::UNAUTHORIZED, "no_session"),
+    };
+    // The widget is org-scoped (per WorkOS). Unaffiliated users can't mint.
+    if session.tenant.starts_with("user_") {
+        return error_resp(StatusCode::FORBIDDEN, "no_organization");
+    }
+
+    let url = format!(
+        "{}/widgets/token",
+        oidc.config.issuer_url.trim_end_matches('/')
+    );
+    let body = serde_json::json!({
+        "organization_id": session.tenant,
+        "user_id": session.sub,
+        "scopes": ["widgets:api-keys:manage"],
+    });
+    let resp = match oidc
+        .http
+        .post(&url)
+        .bearer_auth(&oidc.config.client_secret)
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return error_resp(StatusCode::BAD_GATEWAY, &format!("workos_send: {e}")),
+    };
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return error_resp(
+            StatusCode::BAD_GATEWAY,
+            &format!("workos_status {status}: {text}"),
+        );
+    }
+    #[derive(Deserialize)]
+    struct WidgetTokenResponse {
+        token: String,
+    }
+    let parsed: WidgetTokenResponse = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => return error_resp(StatusCode::BAD_GATEWAY, &format!("workos_json: {e}")),
+    };
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "token": parsed.token,
+            "organization_id": session.tenant,
+        })),
+    )
+        .into_response()
+}
+
 pub async fn logout(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
     let secure = state
         .oidc
@@ -1088,6 +1265,18 @@ mod tests {
         );
         assert_eq!(parse_cookie(&h, "omp_session"), Some("hello"));
         assert_eq!(parse_cookie(&h, "missing"), None);
+    }
+
+    #[test]
+    fn validation_cache_respects_ttl() {
+        let cache = ValidationCache::new();
+        let key = [9u8; 32];
+        cache.insert(key, "acme".into(), 3600);
+        assert_eq!(cache.get(&key).as_deref(), Some("acme"));
+        // Insert with a 0s TTL: read is taken at `now`, entry expires at `now`,
+        // so the `>` check rejects it on the very next get.
+        cache.insert(key, "acme".into(), 0);
+        assert_eq!(cache.get(&key), None);
     }
 
     #[test]

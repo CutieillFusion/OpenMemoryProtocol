@@ -23,6 +23,7 @@
   let renderHint: RenderHint = { kind: 'binary' };
   let loading = false;
   let error: string | null = null;
+  let notFoundInTenant = false;
   let history: CommitView[] = [];
   /// True when the rendered content came from the staging index, not from
   /// HEAD. Surfaces a "staged" tag in the UI so the user knows the file
@@ -76,10 +77,24 @@
       openSectionFromHash();
     } catch (e) {
       error = e instanceof ApiError ? `${e.code}: ${e.message}` : String(e);
+      notFoundInTenant =
+        e instanceof ApiError &&
+        (e.status === 404 || e.code === 'not_found') &&
+        !at;
     } finally {
       loading = false;
     }
   }
+
+  // Path category for the friendly empty-state. `schemas/<file_type>/...`
+  // and `probes/<ns>/<name>/...` are tenant-scoped — a fresh tenant won't
+  // have them committed yet, and the file viewer should suggest the
+  // marketplace flow rather than just surfacing the raw 404.
+  $: pathKind = filePath.startsWith('schemas/')
+    ? 'schema'
+    : filePath.startsWith('probes/')
+      ? 'probe'
+      : 'file';
 
   function openSectionFromHash() {
     if (typeof window === 'undefined') return;
@@ -196,7 +211,35 @@
   {/if}
 
   {#if error}
-    <div class="error-banner">{error}</div>
+    {#if notFoundInTenant && pathKind === 'schema'}
+      <div class="empty-state">
+        <h2>Schema not in this tenant</h2>
+        <p class="muted">
+          <code class="mono">{filePath}</code> isn't committed in your
+          tenant's tree yet. Each tenant has its own schemas — what you saw
+          on a different account doesn't carry over.
+        </p>
+        <p class="muted">
+          Browse available schemas on the
+          <a class="link" href="{base}/schema-marketplace">schema marketplace</a>,
+          or commit one yourself by uploading TOML at
+          <code class="mono">schemas/&lt;file_type&gt;/schema.toml</code>.
+        </p>
+      </div>
+    {:else if notFoundInTenant && pathKind === 'probe'}
+      <div class="empty-state">
+        <h2>Probe not in this tenant</h2>
+        <p class="muted">
+          <code class="mono">{filePath}</code> isn't committed in your
+          tenant's tree yet. Probes are tenant-scoped — install one from the
+          <a class="link" href="{base}/marketplace">probe marketplace</a> or
+          build your own at
+          <a class="link" href="{base}/probes/build">/probes/build</a>.
+        </p>
+      </div>
+    {:else}
+      <div class="error-banner">{error}</div>
+    {/if}
   {/if}
 
   {#if resp || blobInfo}
@@ -329,6 +372,22 @@
 </div>
 
 <style>
+  .empty-state {
+    max-width: 640px;
+    margin: 16px 0 24px;
+    padding: 16px 20px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+  }
+  .empty-state h2 {
+    margin: 0 0 8px;
+    font-size: 1rem;
+  }
+  .empty-state p {
+    margin: 4px 0;
+    font-size: 0.9rem;
+  }
   .file-page-grid {
     padding: 24px 32px 64px calc(clamp(240px, 22vw, 320px) + 32px);
     transition: padding-right 0.15s ease;

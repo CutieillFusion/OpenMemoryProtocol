@@ -19,7 +19,7 @@ fn init_drops_starter_pack() {
     let td = TempDir::new().unwrap();
     let _repo = Repo::init(td.path()).unwrap();
     assert!(td.path().join(".omp/HEAD").exists());
-    assert!(td.path().join("schemas/text.schema").exists());
+    assert!(td.path().join("schemas/text/schema.toml").exists());
     assert!(td.path().join("omp.toml").exists());
     // The v1 starter pack is the three `file.*` probes.
     for basename in ["size", "mime", "sha256"] {
@@ -36,7 +36,7 @@ fn init_drops_starter_pack() {
     // No text/pdf/image/audio probes in the starter pack.
     assert!(!td.path().join("probes/text").exists());
     assert!(!td.path().join("probes/pdf").exists());
-    assert!(!td.path().join("schemas/pdf.schema").exists());
+    assert!(!td.path().join("schemas/pdf/schema.toml").exists());
 }
 
 #[test]
@@ -197,7 +197,7 @@ probe = "missing.probe"
 type = "string"
 "#;
     let err = repo
-        .add("schemas/custom.schema", bad, None, None)
+        .add("schemas/custom/schema.toml", bad, None, None)
         .unwrap_err();
     assert!(matches!(err, omp_core::OmpError::SchemaValidation(_)));
 }
@@ -297,7 +297,7 @@ source = "user_provided"
 type = "string"
 required = false
 "#;
-    repo.add("schemas/demo.schema", extra, None, None).unwrap();
+    repo.add("schemas/demo/schema.toml", extra, None, None).unwrap();
     let _c2 = repo
         .commit("add demo schema", Some(fixed_author()))
         .unwrap();

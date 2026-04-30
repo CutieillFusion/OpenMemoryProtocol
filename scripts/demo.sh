@@ -23,7 +23,7 @@ echo "== stage the starter schemas + probes + omp.toml ==" >&2
 # The repo needs schemas/probes in HEAD for time-travel; stage everything
 # dropped by init.
 shopt -s globstar
-for f in omp.toml schemas/**/*.schema probes/**/probe.wasm probes/**/probe.toml; do
+for f in omp.toml schemas/*/schema.toml probes/**/probe.wasm probes/**/probe.toml; do
   [ -f "$f" ] || continue
   "$OMP" add "$f" --from "$f" >/dev/null
 done

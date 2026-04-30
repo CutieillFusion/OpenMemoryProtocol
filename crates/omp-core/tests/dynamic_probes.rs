@@ -64,7 +64,7 @@ wall_clock_s = 5
 
 /// A schema that adds a `byte_size_v2` field driven by a user-uploaded
 /// probe at qualified name `<probe_name>`. Mirrors the shape of
-/// `crates/omp-core/starter-schemas/text.schema`.
+/// `crates/omp-core/starter-schemas/text/schema.toml`.
 fn schema_with_user_probe(probe_name: &str) -> String {
     format!(
         r#"file_type = "text"
@@ -100,7 +100,7 @@ fn user_uploaded_probe_runs_at_ingest() {
     // validation against current_probe_names() — which now sees the user
     // probe in HEAD because of Phase 1.
     let schema_bytes = schema_with_user_probe(&probe_name);
-    stage_blob(&repo, "schemas/text.schema", schema_bytes.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", schema_bytes.as_bytes());
     repo.commit("update text schema", Some(fixed_author()))
         .unwrap();
 
@@ -152,7 +152,7 @@ fn schema_validation_accepts_user_probe_once_committed() {
     let schema_bytes = schema_with_user_probe(&probe_name);
     // This call must not raise SchemaValidation — a regression here means
     // current_probe_names() failed to discover the tree-resident probe.
-    stage_blob(&repo, "schemas/text.schema", schema_bytes.as_bytes());
+    stage_blob(&repo, "schemas/text/schema.toml", schema_bytes.as_bytes());
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn user_probe_uncommitted_is_invisible_to_schema_validation() {
 
     let schema_bytes = schema_with_user_probe(&probe_name);
     let result = repo.add(
-        "schemas/text.schema",
+        "schemas/text/schema.toml",
         schema_bytes.as_bytes(),
         Some(BTreeMap::new()),
         None,

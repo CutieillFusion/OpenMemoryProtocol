@@ -14,12 +14,11 @@
   let panelOpen = true;
   let healthOk = true;
 
-  // Web UI is WorkOS-only. The bearer-token "paste a token" modal was a
-  // pre-doc-22 fallback for self-hosted single-tenant installs; it has
-  // been removed because (a) it's a phishing-shaped UX, and (b) doc 22
-  // committed the browser surface to WorkOS exclusively. The CLI and any
-  // machine client still use `Authorization: Bearer <token>` against the
-  // gateway — that path is server-side and untouched by these changes.
+  // Web UI is WorkOS-only. The bearer-token "paste a token" modal has been
+  // removed because it's a phishing-shaped UX; the browser surface is WorkOS
+  // exclusively. The CLI and any machine client still use
+  // `Authorization: Bearer <token>` against the gateway — that path is
+  // server-side and untouched by these changes.
   $: showWorkosGate = $auth.mode === 'workos';
   // A deployment in token-mode (`auth_mode: "token"` from /status) means
   // the operator hasn't configured WorkOS for browser users. Render an
@@ -33,7 +32,8 @@
     { href: '/', label: 'Tree' },
     { href: '/upload', label: 'Upload' },
     { href: '/probes/build', label: 'Build probe' },
-    { href: '/marketplace', label: 'Marketplace' },
+    { href: '/marketplace', label: 'Probes' },
+    { href: '/schema-marketplace', label: 'Schemas' },
     { href: '/commit', label: 'Commit' },
     { href: '/branches', label: 'Branches' },
     { href: '/query', label: 'Query' },
@@ -73,7 +73,6 @@
   });
 
   // Logout is exclusively WorkOS now (the form below POSTs to /auth/logout).
-  // The pre-doc-22 `clearToken` flow used to live here and has been removed.
 </script>
 
 <div class="app">
@@ -173,8 +172,7 @@
         </p>
         <p class="muted text-sm">
           If you're an operator: set <code>[workos]</code> in your gateway
-          config (see <code>docs/design/22-workos-auth.md</code>) and
-          restart the gateway. Until then, machine clients (the CLI,
+          config and restart the gateway. Until then, machine clients (the CLI,
           CI jobs) can still hit the API directly with
           <code>Authorization: Bearer &lt;token&gt;</code> against a
           tenant token registered in <code>tenants.toml</code>.

@@ -152,6 +152,20 @@ export interface MeResponse {
 export const getMe = (signal?: AbortSignal) =>
   request<MeResponse>('/auth/me', { signal });
 
+export interface WidgetTokenResponse {
+  token: string;
+  organization_id: string;
+}
+
+/**
+ * Mint a short-lived WorkOS widget session token bound to the current
+ * user + organization, scoped to API-key management. Feed `token` into
+ * the WorkOS API Keys widget; the widget then talks directly to WorkOS
+ * for create / list / revoke.
+ */
+export const getWidgetToken = (signal?: AbortSignal) =>
+  request<WidgetTokenResponse>('/auth/widget-token', { signal });
+
 export const listFiles = (params: { at?: string; prefix?: string; verbose?: boolean } = {}, signal?: AbortSignal) =>
   request<FileListing[]>('/files', { query: params, signal });
 
@@ -387,7 +401,7 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
   return buf;
 }
 
-// ---- Marketplace (doc 23) ----
+// ---- Marketplace ----
 
 export interface MarketplaceProbe {
   id: string;
@@ -438,27 +452,126 @@ export const publishMarketplaceProbe = async (
     name: string;
     version: string;
     description?: string;
-    wasm: Blob;
+    /** Rust `lib.rs` source. The marketplace builds the wasm server-side. */
+    source: Blob;
+    /** Probe manifest TOML (`probe.toml`). */
     manifest: Blob;
     readme?: Blob;
-    source?: Blob;
   },
   signal?: AbortSignal
-): Promise<{ probe: MarketplaceProbe }> => {
+): Promise<{ probe: MarketplaceProbe; build_log: string }> => {
   const fd = new FormData();
   fd.append('namespace', body.namespace);
   fd.append('name', body.name);
   fd.append('version', body.version);
   if (body.description) fd.append('description', body.description);
-  fd.append('wasm', body.wasm, 'probe.wasm');
+  fd.append('source', body.source, 'lib.rs');
   fd.append('manifest', body.manifest, 'probe.toml');
   if (body.readme) fd.append('readme', body.readme, 'README.md');
-  if (body.source) fd.append('source', body.source, 'lib.rs');
-  return request<{ probe: MarketplaceProbe }>('/marketplace/probes', {
+  return request<{ probe: MarketplaceProbe; build_log: string }>(
+    '/marketplace/probes',
+    { method: 'POST', body: fd, signal }
+  );
+};
+
+export const patchMarketplaceProbe = (
+  id: string,
+  patch: { description?: string; readme?: string },
+  signal?: AbortSignal
+) =>
+  request<{ probe: MarketplaceProbe }>(
+    `/marketplace/probes/${encodeURIComponent(id)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+      signal
+    }
+  );
+
+// ---- Schema marketplace ----
+
+export interface MarketplaceSchema {
+  id: string;
+  publisher_sub: string;
+  file_type: string;
+  version: string;
+  description: string | null;
+  schema_hash: string;
+  readme_hash: string | null;
+  published_at: number;
+  yanked_at: number | null;
+}
+
+export const listMarketplaceSchemas = (
+  params: { file_type?: string; q?: string; limit?: number } = {},
+  signal?: AbortSignal
+) =>
+  request<{ schemas: MarketplaceSchema[] }>('/marketplace/schemas', {
+    query: params,
+    signal
+  });
+
+export const getMarketplaceSchema = (id: string, signal?: AbortSignal) =>
+  request<{ schema: MarketplaceSchema; schema_preview: string | null }>(
+    `/marketplace/schemas/${encodeURIComponent(id)}`,
+    { signal }
+  );
+
+export const publishMarketplaceSchema = async (
+  body: {
+    version: string;
+    description?: string;
+    /** `schema.toml` body. file_type is taken from the TOML itself. */
+    schema: Blob;
+    readme?: Blob;
+  },
+  signal?: AbortSignal
+): Promise<{ schema: MarketplaceSchema }> => {
+  const fd = new FormData();
+  fd.append('version', body.version);
+  if (body.description) fd.append('description', body.description);
+  fd.append('schema', body.schema, 'schema.toml');
+  if (body.readme) fd.append('readme', body.readme, 'README.md');
+  return request<{ schema: MarketplaceSchema }>('/marketplace/schemas', {
     method: 'POST',
     body: fd,
     signal
   });
+};
+
+export const patchMarketplaceSchema = (
+  id: string,
+  patch: { description?: string; readme?: string },
+  signal?: AbortSignal
+) =>
+  request<{ schema: MarketplaceSchema }>(
+    `/marketplace/schemas/${encodeURIComponent(id)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+      signal
+    }
+  );
+
+export const yankMarketplaceSchema = (id: string, signal?: AbortSignal) =>
+  request<{ ok: boolean; already_yanked?: boolean }>(
+    `/marketplace/schemas/${encodeURIComponent(id)}`,
+    { method: 'DELETE', signal }
+  );
+
+export const fetchMarketplaceSchemaBlob = async (
+  id: string,
+  hash: string,
+  signal?: AbortSignal
+): Promise<Response> => {
+  const path = `/marketplace/schemas/${encodeURIComponent(id)}/blobs/${encodeURIComponent(hash)}`;
+  const resp = await fetch(path, { signal, credentials: 'same-origin' });
+  if (!resp.ok) {
+    throw new ApiError(resp.status, 'blob_fetch', `${resp.status} ${resp.statusText}`);
+  }
+  return resp;
 };
 
 /**
