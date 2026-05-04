@@ -1,0 +1,13 @@
+[package]
+name = "pdf-page-count"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "pdf_page_count"
+crate-type = ["cdylib"]
+
+[dependencies]
+probe-common = { path = "../probe-common" }
+ciborium = { workspace = true }

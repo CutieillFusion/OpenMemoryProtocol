@@ -45,19 +45,55 @@ macro_rules! probe {
     };
 }
 
-/// The v1 starter pack. Deliberately tiny: three universal `file.*` probes
-/// that every manifest should carry. File-type-specific probes (text, PDF,
-/// image, audio) are iteration-2 work — adding them is a committed blob in
-/// the target repo, not an OMP release (see `05-probes.md`).
+/// The v1 starter pack: three universal `file.*` probes plus the
+/// format-specific probes referenced by the default schemas in
+/// `docs/design/26-default-schemas-and-probes.md`. Probes for audio/video
+/// metadata (decoders) remain deferred and are not in the starter pack.
 pub const STARTER_PROBES: &[StarterProbe] = &[
     probe!("file.size", "file", "size"),
     probe!("file.mime", "file", "mime"),
     probe!("file.sha256", "file", "sha256"),
+    probe!("text.line_count", "text", "line_count"),
+    probe!("image.dimensions", "image", "dimensions"),
+    probe!("audio.duration_seconds", "audio", "duration_seconds"),
+    probe!("video.duration_seconds", "video", "duration_seconds"),
+    probe!("video.dimensions", "video", "dimensions"),
+    probe!("pdf.page_count", "pdf", "page_count"),
 ];
 
 pub fn starter_schemas() -> Vec<(&'static str, &'static [u8])> {
-    vec![(
-        "schemas/text/schema.toml",
-        include_bytes!("../../starter-schemas/text/schema.toml"),
-    )]
+    vec![
+        (
+            "schemas/text/schema.toml",
+            include_bytes!("../../starter-schemas/text/schema.toml"),
+        ),
+        (
+            "schemas/markdown/schema.toml",
+            include_bytes!("../../starter-schemas/markdown/schema.toml"),
+        ),
+        (
+            "schemas/png/schema.toml",
+            include_bytes!("../../starter-schemas/png/schema.toml"),
+        ),
+        (
+            "schemas/jpeg/schema.toml",
+            include_bytes!("../../starter-schemas/jpeg/schema.toml"),
+        ),
+        (
+            "schemas/mp3/schema.toml",
+            include_bytes!("../../starter-schemas/mp3/schema.toml"),
+        ),
+        (
+            "schemas/wav/schema.toml",
+            include_bytes!("../../starter-schemas/wav/schema.toml"),
+        ),
+        (
+            "schemas/mp4/schema.toml",
+            include_bytes!("../../starter-schemas/mp4/schema.toml"),
+        ),
+        (
+            "schemas/pdf/schema.toml",
+            include_bytes!("../../starter-schemas/pdf/schema.toml"),
+        ),
+    ]
 }

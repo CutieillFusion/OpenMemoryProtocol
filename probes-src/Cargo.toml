@@ -5,6 +5,13 @@ members = [
     "file-size",
     "file-mime",
     "file-sha256",
+    "text-line-count",
+    "image-dimensions",
+    "pdf-page-count",
+    "audio-duration",
+    "probe-mp4",
+    "video-duration",
+    "video-dimensions",
 ]
 
 [workspace.package]

@@ -1,0 +1,13 @@
+[package]
+name = "text-line-count"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "text_line_count"
+crate-type = ["cdylib"]
+
+[dependencies]
+probe-common = { path = "../probe-common" }
+ciborium = { workspace = true }

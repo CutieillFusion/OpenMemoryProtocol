@@ -1,0 +1,7 @@
+name = "pdf.page_count"
+returns = "int"
+accepts_kwargs = []
+description = "Best-effort page count via byte scan for `/Type /Page` markers. Handles uncompressed cross-reference tables; PDFs that store all page nodes inside compressed object streams return null."
+
+[limits]
+max_input_bytes = 268435456

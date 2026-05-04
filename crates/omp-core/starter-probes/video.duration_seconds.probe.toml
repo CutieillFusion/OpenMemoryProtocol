@@ -1,0 +1,7 @@
+name = "video.duration_seconds"
+returns = "float"
+accepts_kwargs = []
+description = "Movie duration in seconds for MP4 (ISO BMFF). Reads `moov.mvhd` and divides duration by timescale. Returns null for non-MP4 input or if `moov`/`mvhd` is missing."
+
+[limits]
+max_input_bytes = 1073741824

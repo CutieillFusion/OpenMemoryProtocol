@@ -1,0 +1,7 @@
+name = "video.dimensions"
+returns = "object"
+accepts_kwargs = []
+description = "Pixel dimensions of the first video track in an MP4 (ISO BMFF) file: {width: int, height: int}. Reads the video track's `tkhd` (16.16 fixed-point); selects the track whose `mdia.hdlr` handler_type is `vide`."
+
+[limits]
+max_input_bytes = 1073741824

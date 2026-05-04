@@ -27,6 +27,12 @@ declare -A MAP=(
   [file-size]=file_size.wasm
   [file-mime]=file_mime.wasm
   [file-sha256]=file_sha256.wasm
+  [text-line-count]=text_line_count.wasm
+  [image-dimensions]=image_dimensions.wasm
+  [pdf-page-count]=pdf_page_count.wasm
+  [audio-duration]=audio_duration.wasm
+  [video-duration]=video_duration.wasm
+  [video-dimensions]=video_dimensions.wasm
 )
 
 # Source crate dir -> dotted wasm name we stage under `build/wasm/`.
@@ -34,6 +40,12 @@ declare -A NAMES=(
   [file-size]=file.size.wasm
   [file-mime]=file.mime.wasm
   [file-sha256]=file.sha256.wasm
+  [text-line-count]=text.line_count.wasm
+  [image-dimensions]=image.dimensions.wasm
+  [pdf-page-count]=pdf.page_count.wasm
+  [audio-duration]=audio.duration_seconds.wasm
+  [video-duration]=video.duration_seconds.wasm
+  [video-dimensions]=video.dimensions.wasm
 )
 
 WASM_OUT="$PROBES_SRC/target/wasm32-unknown-unknown/release"

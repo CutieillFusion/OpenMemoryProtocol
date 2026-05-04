@@ -19,24 +19,37 @@ fn init_drops_starter_pack() {
     let td = TempDir::new().unwrap();
     let _repo = Repo::init(td.path()).unwrap();
     assert!(td.path().join(".omp/HEAD").exists());
-    assert!(td.path().join("schemas/text/schema.toml").exists());
-    assert!(td.path().join("omp.toml").exists());
-    // The v1 starter pack is the three `file.*` probes.
-    for basename in ["size", "mime", "sha256"] {
-        // Per-probe folder layout (doc 23).
+    // Default per-format schemas land at init (doc 26).
+    for file_type in ["text", "markdown", "png", "jpeg", "mp3", "wav", "mp4", "pdf"] {
         assert!(td
             .path()
-            .join(format!("probes/file/{basename}/probe.wasm"))
-            .exists());
-        assert!(td
-            .path()
-            .join(format!("probes/file/{basename}/probe.toml"))
+            .join(format!("schemas/{file_type}/schema.toml"))
             .exists());
     }
-    // No text/pdf/image/audio probes in the starter pack.
-    assert!(!td.path().join("probes/text").exists());
-    assert!(!td.path().join("probes/pdf").exists());
-    assert!(!td.path().join("schemas/pdf/schema.toml").exists());
+    assert!(td.path().join("omp.toml").exists());
+    // Starter pack: three `file.*` universal probes plus the format-specific
+    // probes wired into the default schemas (doc 26). Per-probe folder layout
+    // is doc 23.
+    for (ns, base) in [
+        ("file", "size"),
+        ("file", "mime"),
+        ("file", "sha256"),
+        ("text", "line_count"),
+        ("image", "dimensions"),
+        ("audio", "duration_seconds"),
+        ("video", "duration_seconds"),
+        ("video", "dimensions"),
+        ("pdf", "page_count"),
+    ] {
+        assert!(td
+            .path()
+            .join(format!("probes/{ns}/{base}/probe.wasm"))
+            .exists());
+        assert!(td
+            .path()
+            .join(format!("probes/{ns}/{base}/probe.toml"))
+            .exists());
+    }
 }
 
 #[test]

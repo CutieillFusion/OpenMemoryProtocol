@@ -1,0 +1,30 @@
+file_type = "mp4"
+mime_patterns = ["video/mp4"]
+
+[fields.byte_size]
+source = "probe"
+probe = "file.size"
+type = "int"
+
+[fields.sha256]
+source = "probe"
+probe = "file.sha256"
+type = "string"
+
+[fields.mime]
+source = "probe"
+probe = "file.mime"
+type = "string"
+
+[fields.duration_seconds]
+source = "probe"
+probe = "video.duration_seconds"
+type = "float"
+
+[fields.dimensions]
+source = "probe"
+probe = "video.dimensions"
+type = "object"
+
+[render]
+kind = "binary"

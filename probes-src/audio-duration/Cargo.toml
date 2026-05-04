@@ -1,0 +1,13 @@
+[package]
+name = "audio-duration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "audio_duration"
+crate-type = ["cdylib"]
+
+[dependencies]
+probe-common = { path = "../probe-common" }
+ciborium = { workspace = true }

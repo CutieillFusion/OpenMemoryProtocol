@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "audio-duration"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "probe-common",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -127,6 +135,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "image-dimensions"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "imagesize",
+ "probe-common",
+]
+
+[[package]]
+name = "imagesize"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
+
+[[package]]
 name = "infer"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -139,12 +162,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
 
 [[package]]
+name = "pdf-page-count"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "probe-common",
+]
+
+[[package]]
 name = "probe-common"
 version = "0.1.0"
 dependencies = [
  "ciborium",
  "ciborium-io",
 ]
+
+[[package]]
+name = "probe-mp4"
+version = "0.1.0"
 
 [[package]]
 name = "proc-macro2"
@@ -217,6 +252,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "text-line-count"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "probe-common",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -233,6 +276,24 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "video-dimensions"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "probe-common",
+ "probe-mp4",
+]
+
+[[package]]
+name = "video-duration"
+version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "probe-common",
+ "probe-mp4",
+]
 
 [[package]]
 name = "zerocopy"

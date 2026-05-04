@@ -1,0 +1,7 @@
+name = "text.line_count"
+returns = "int"
+accepts_kwargs = []
+description = "Number of lines in a text or markdown document. Counts `\\n` separators; a non-newline-terminated final line still counts."
+
+[limits]
+max_input_bytes = 33554432

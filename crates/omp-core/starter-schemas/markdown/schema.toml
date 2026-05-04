@@ -1,5 +1,5 @@
-file_type = "text"
-mime_patterns = ["text/*"]
+file_type = "markdown"
+mime_patterns = ["text/markdown", "text/x-markdown"]
 allow_extra_fields = true
 
 [fields.byte_size]
@@ -21,3 +21,6 @@ type = "string"
 source = "probe"
 probe = "text.line_count"
 type = "int"
+
+[render]
+kind = "markdown"

@@ -1,6 +1,5 @@
-file_type = "text"
-mime_patterns = ["text/*"]
-allow_extra_fields = true
+file_type = "jpeg"
+mime_patterns = ["image/jpeg", "image/jpg"]
 
 [fields.byte_size]
 source = "probe"
@@ -17,7 +16,10 @@ source = "probe"
 probe = "file.mime"
 type = "string"
 
-[fields.line_count]
+[fields.dimensions]
 source = "probe"
-probe = "text.line_count"
-type = "int"
+probe = "image.dimensions"
+type = "object"
+
+[render]
+kind = "image"

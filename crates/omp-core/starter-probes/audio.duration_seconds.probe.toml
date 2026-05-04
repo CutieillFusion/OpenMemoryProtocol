@@ -1,0 +1,7 @@
+name = "audio.duration_seconds"
+returns = "float"
+accepts_kwargs = []
+description = "Duration in seconds for WAV (RIFF/fmt+data chunks) and MP3 (frame walk with Xing/Info VBR awareness). Returns null for other formats or unparseable input."
+
+[limits]
+max_input_bytes = 268435456

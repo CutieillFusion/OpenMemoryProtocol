@@ -1,0 +1,7 @@
+name = "image.dimensions"
+returns = "object"
+accepts_kwargs = []
+description = "Pixel dimensions of a raster image: {width: int, height: int}. Header sniff via `imagesize`; supports PNG, JPEG, and other common formats. Returns null if the bytes can't be parsed."
+
+[limits]
+max_input_bytes = 67108864
