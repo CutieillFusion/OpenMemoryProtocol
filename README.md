@@ -135,6 +135,80 @@ flowchart LR
 
 Concrete `POST /files` flow is spelled out step-by-step in [`docs/design/14-microservice-decomposition.md`](docs/design/14-microservice-decomposition.md#one-concrete-flow--post-files). The split between what ships today (gateway + sharded `omp-server` backends) and what is wire-pinned but co-located (per-service ingest/refs/query split) is in that doc's *Implementation status* section.
 
+## End-to-end encryption
+
+For encrypted tenants the trust boundary moves: keys never leave the client, the server stores ciphertext only, and the ingest engine (probes + manifest assembly) runs client-side against plaintext. Full design in [`docs/design/13-end-to-end-encryption.md`](docs/design/13-end-to-end-encryption.md); primitives live in [`crates/omp-crypto/`](crates/omp-crypto/).
+
+```mermaid
+flowchart TB
+    subgraph Client["Client (only place plaintext exists)"]
+        pass["Passphrase"]
+        argon["Argon2id<br/>salt = tenant_id"]
+        root["tenant_root_key (32B)<br/>never leaves client"]
+        hkdf["HKDF-SHA-256<br/>domain-separated"]
+        data["data_key"]
+        man["manifest_key"]
+        path["path_key"]
+        cmt["commit_key"]
+        sh["share_unwrap_key"]
+        idpriv["identity X25519 priv<br/>(wrapped under root_key)"]
+
+        plaintext["Plaintext file"]
+        ck["per-file content_key<br/>(CSPRNG, fresh per file)"]
+        probes["WASM probes<br/>(same ABI, run client-side)"]
+        mani["Manifest<br/>+ wrapped content_key"]
+        tree["Tree entry names"]
+        msg["Commit message"]
+
+        pass --> argon --> root
+        root --> hkdf
+        hkdf --> data & man & path & cmt & sh
+        root -.->|wraps| idpriv
+
+        plaintext --> probes --> mani
+        plaintext -->|ChaCha20-Poly1305| blobC["blob ciphertext"]
+        ck -->|encrypts blob| blobC
+        ck -->|wrapped by data_key| mani
+        mani -->|ChaCha20-Poly1305 / manifest_key| maniC["manifest ciphertext"]
+        tree -->|per-entry name AEAD / path_key| treeC["tree ciphertext"]
+        msg -->|ChaCha20-Poly1305 / commit_key| cmtC["commit ciphertext"]
+    end
+
+    subgraph Wire["Wire (TLS)"]
+        env["framing header<br/>(type + size, plaintext)<br/>+ encrypted body"]
+    end
+
+    subgraph Server["Server (omp-store, omp-server, gateway — ciphertext only)"]
+        objs["object store<br/>blob/tree/manifest/commit<br/>= sha256(framing + ciphertext)"]
+        refs2["refs<br/>(plaintext: branch names, hashes)"]
+        idpub["tenant registry<br/>identity X25519 pub key"]
+    end
+
+    subgraph Share["Sharing (age-style recipient wrap)"]
+        recip["recipient's X25519 pub"]
+        wrapped["wrapped content_key<br/>(x25519 + ChaCha20-Poly1305)"]
+        shareObj["share object<br/>(plaintext envelope,<br/>wrapped keys inside)"]
+    end
+
+    blobC & maniC & treeC & cmtC --> env --> objs
+    objs --> refs2
+    idpriv -.->|publishes pub| idpub
+
+    ck --> wrapped
+    recip --> wrapped --> shareObj --> objs
+```
+
+**What the server can and cannot see:**
+
+| Visible to server | Encrypted from server |
+|---|---|
+| Object framing (`<type> <size>\0`) | Every body byte after the header |
+| Reference graph shape, parent links | File contents, manifests, tree entry names, commit messages |
+| Object sizes, commit timestamps | Schemas, `omp.toml`, probe WASM (encrypted under `data_key`) |
+| Tenant id, identity X25519 public key | Tenant root key, all subkeys, identity private key |
+
+The five fixed points hold: SHA-256 framing is unchanged (now hashing ciphertext bodies), `ObjectStore` doesn't care what's inside an object, the four field sources still apply, and the WASM probe ABI is preserved — probes just run on the client. The honest cost is dedup across tenants (and across truly-identical files within a tenant) — accepted, since avoiding that leak is the point.
+
 ## Layout
 
 ```
