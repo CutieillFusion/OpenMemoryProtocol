@@ -12,7 +12,7 @@ flowchart LR
     Builder["omp-builder"]
     Market["omp-marketplace"]
 
-    Kafka[("Kafka")]
+    Kafka[("omp-events")]
     WorkOS["WorkOS"]
 
     CLI --> GW
@@ -28,6 +28,6 @@ flowchart LR
     Builder --> Store
     Market --> Store
 
-    Server --> Events
-    GW --> Events
+    Server --> Kafka
+    GW --> Kafka
 ```
