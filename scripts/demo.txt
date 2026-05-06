@@ -1,0 +1,13 @@
+OpenMemoryProtocol — sample upload
+==================================
+
+This is a small text file you can drop into the demo gateway's web UI to
+exercise the `text` schema and the universal `file.*` probes.
+
+After upload you should see:
+  - byte_size  — populated by file.size
+  - sha256     — populated by file.sha256
+  - mime       — populated by file.mime (likely "text/plain")
+  - line_count — populated by text.line_count
+
+Multi-tenant routing: dev-alice lands on shard A, dev-bob on shard B.

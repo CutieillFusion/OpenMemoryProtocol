@@ -1,0 +1,7 @@
+name = "text.word_count"
+returns = "int"
+accepts_kwargs = []
+description = "Number of whitespace-separated words in a UTF-8 text document. Returns 0 for non-UTF-8 input."
+
+[limits]
+max_input_bytes = 33554432

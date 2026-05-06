@@ -113,9 +113,23 @@ GATEWAY_BIN=./target/release/omp-gateway
 BUILDER_BIN=./target/release/omp-builder
 MARKETPLACE_BIN=./target/release/omp-marketplace
 
-log "initializing repos"
-"$OMP_BIN" init --repo "$DEMO_ROOT/shard-a" >/dev/null
-"$OMP_BIN" init --repo "$DEMO_ROOT/shard-b" >/dev/null
+log "initializing repos and committing default starter pack"
+# `omp init` drops the starter schemas/probes/omp.toml into the working tree
+# but does not commit them, so a fresh shard's `/files` looks empty in the UI.
+# Stage and commit them here so each shard boots with the defaults visible at
+# HEAD. These paths are classified as Mode::Blob (walker.rs) and bypass the
+# repo's schema policy, so this works under the default `reject` policy.
+seed_defaults() {
+  local repo=$1
+  "$OMP_BIN" --repo "$repo" init >/dev/null
+  ( cd "$repo" && find omp.toml schemas probes -type f 2>/dev/null | sort ) \
+  | while IFS= read -r path; do
+      "$OMP_BIN" --repo "$repo" add "$path" >/dev/null
+    done
+  "$OMP_BIN" --repo "$repo" commit -m "seed default schemas and probes" >/dev/null
+}
+seed_defaults "$DEMO_ROOT/shard-a"
+seed_defaults "$DEMO_ROOT/shard-b"
 
 # Even though the gRPC store is wired, the demo gateway routes to the
 # omp-server shards directly (each with its own DiskStore). The gRPC store
@@ -198,41 +212,13 @@ log "[demo] gateway healthz:"
 curl -fsS "$GATE/healthz"
 echo
 
-log "[demo] alice via gateway: POST a file"
-TMPFILE=$(mktemp)
-echo "hello from alice" >"$TMPFILE"
-curl -fsS -X POST "$GATE/files" \
-  -H "Authorization: Bearer dev-alice" \
-  -F "path=alice.txt" \
-  -F "file=@$TMPFILE" >/dev/null
-rm "$TMPFILE"
-
-curl -fsS -X POST "$GATE/commit" \
-  -H "Authorization: Bearer dev-alice" \
-  -H "Content-Type: application/json" \
-  -d '{"message":"alice add"}'
+log "[demo] alice routes to shard A — schemas via gateway:"
+curl -fsS "$GATE/schemas" \
+  -H "Authorization: Bearer dev-alice" | head -c 400
 echo
-
-log "[demo] bob via gateway: POST a file"
-TMPFILE=$(mktemp)
-echo "hello from bob" >"$TMPFILE"
-curl -fsS -X POST "$GATE/files" \
-  -H "Authorization: Bearer dev-bob" \
-  -F "path=bob.txt" \
-  -F "file=@$TMPFILE" >/dev/null
-rm "$TMPFILE"
-
-curl -fsS -X POST "$GATE/commit" \
-  -H "Authorization: Bearer dev-bob" \
-  -H "Content-Type: application/json" \
-  -d '{"message":"bob add"}'
-echo
-
-log "[demo] /files on shard A directly:"
-curl -fsS "http://127.0.0.1:$SHARD_A_PORT/files" | head -c 400
-echo
-log "[demo] /files on shard B directly:"
-curl -fsS "http://127.0.0.1:$SHARD_B_PORT/files" | head -c 400
+log "[demo] bob routes to shard B — schemas via gateway:"
+curl -fsS "$GATE/schemas" \
+  -H "Authorization: Bearer dev-bob" | head -c 400
 echo
 
 log "[demo] unauthorized request rejected at gateway:"
