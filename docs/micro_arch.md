@@ -28,6 +28,6 @@ flowchart LR
     Builder --> Store
     Market --> Store
 
-    Server --> Kafka
-    GW --> Kafka
+    Server --> Events
+    GW --> Events
 ```
