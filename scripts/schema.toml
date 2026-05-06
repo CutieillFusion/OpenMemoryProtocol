@@ -1,0 +1,28 @@
+file_type = "text"
+mime_patterns = ["text/*"]
+allow_extra_fields = true
+
+[fields.byte_size]
+source = "probe"
+probe = "file.size"
+type = "int"
+
+[fields.sha256]
+source = "probe"
+probe = "file.sha256"
+type = "string"
+
+[fields.mime]
+source = "probe"
+probe = "file.mime"
+type = "string"
+
+[fields.line_count]
+source = "probe"
+probe = "text.line_count"
+type = "int"
+
+[fields.word_count]
+source = "probe"
+probe = "text.word_count"
+type = "int"
