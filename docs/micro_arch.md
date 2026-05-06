@@ -8,7 +8,7 @@ flowchart LR
 
     GW["omp-gateway"]
     Server["omp-server"]
-    Store["omp-store"]
+    Store[("omp-store")]
     Builder["omp-builder"]
     Market["omp-marketplace"]
 
